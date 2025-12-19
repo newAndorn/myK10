@@ -246,7 +246,9 @@ class Screen(object):
         self.linewidth = 1
         self.fs_drv = lv.fs_drv_t()
         fs_driver.fs_register(self.fs_drv, 'S')
-        self.myfont_cn = lv.binfont_create("S:./font_big.bin")
+        #self.myfont_cn = lv.binfont_create("S:./font_big.bin")
+        self.myfont_cn = lv.binfont_create("S:./roboto.bin")
+        print(f"binfont_create successful: {self.myfont_cn is not None}")
         
     #初始化屏幕，设置方向为(0~3)
     def init(self,dir=2):
@@ -310,6 +312,14 @@ class Screen(object):
     #清除全屏，颜色为指定颜色
     def clear(self,line=0,font=None,color=None):
         if font == None:
+            # Delete user-created LVGL widgets from the screen, but preserve persistent objects
+            child_count = self.screen.get_child_count()
+            for i in range(child_count - 1, -1, -1):  # Delete in reverse order
+                child = self.screen.get_child(i)
+                # Don't delete persistent objects like canvas and img
+                if child != self.canvas and child != self.img:
+                    child.delete()
+
             #清除全屏，颜色为指定颜色
             if color == None:
                 self.canvas.fill_bg(lv.color_white(), lv.OPA.TRANSP)
@@ -433,6 +443,124 @@ class Screen(object):
         area.set_height(h)
         lv.draw_rect(self.layer, self.desc, area)
         pass
+
+    def show_loading_animation(self, x=100, y=100, size=50, text="WORKING", color=0xFFFF00):
+        """
+        Show a Fallout-inspired loading animation with a spinning wheel and text.
+
+        Args:
+            x: X position on screen (default: 100)
+            y: Y position on screen (default: 100)
+            size: Size of the spinner (default: 50)
+            text: Text to display below the spinner (default: "WORKING")
+            color: Color of the spinner and text (default: yellow)
+
+        Returns:
+            Dictionary containing the spinner and label objects for later removal
+        """
+        # Create a spinner (rotating loading indicator)
+        spinner = lv.spinner(self.screen)
+        spinner.set_pos(x, y)
+        spinner.set_size(size, size)
+        spinner.set_anim_params(1000, 0)  # 1000ms rotation time, 0ms delay
+
+        # Set spinner color
+        spinner.set_style_arc_color(lv.color_hex(color), lv.PART.INDICATOR)
+        spinner.set_style_arc_width(4, lv.PART.INDICATOR)
+
+        # Create a label below the spinner
+        label = lv.label(self.screen)
+        label.set_text(text)
+        label.set_style_text_color(lv.color_hex(color), 0)
+
+        # Try to use the big font if available
+        try:
+            label.set_style_text_font(self.myfont_cn, 0)
+        except Exception as e:
+            print(f"Exception setting big font for loading text: {e}")
+            # Fallback to larger montserrat font
+            try:
+                label.set_style_text_font(lv.font_montserrat_16, 0)
+            except:
+                pass  # Use default font
+
+        # Position the label below the spinner
+        label.set_pos(x - 40, y + size + 10)
+
+        return {'spinner': spinner, 'label': label}
+
+    def hide_loading_animation(self, animation_dict):
+        """
+        Hide and remove the loading animation.
+
+        Args:
+            animation_dict: Dictionary returned by show_loading_animation()
+        """
+        if 'spinner' in animation_dict:
+            animation_dict['spinner'].delete()
+        if 'label' in animation_dict:
+            animation_dict['label'].delete()
+
+    def get_temperature_color(self, temperature):
+        """
+        Calculate color based on temperature value.
+        Blue for low temperatures (<15°C), green around 20°C, red for high temperatures (>25°C).
+
+        Args:
+            temperature: Temperature in Celsius
+
+        Returns:
+            Color value in hex format (0xRRGGBB)
+        """
+        if temperature <= 15:
+            # Blue for cold temperatures
+            return 0x0000FF
+        elif temperature <= 20:
+            # Transition from blue to green (15°C to 20°C)
+            ratio = (temperature - 15) / 5  # 0 to 1
+            blue = int(255 * (1 - ratio))
+            green = int(255 * ratio)
+            red = 0
+        elif temperature <= 25:
+            # Transition from green to red (20°C to 25°C)
+            ratio = (temperature - 20) / 5  # 0 to 1
+            blue = 0
+            green = int(255 * (1 - ratio))
+            red = int(255 * ratio)
+        else:
+            # Red for hot temperatures
+            return 0xFF0000
+
+        # Convert RGB to hex
+        return (red << 16) | (green << 8) | blue
+
+    def get_humidity_color(self, humidity):
+        """
+        Calculate color based on humidity value.
+        Yellow for low humidity (<30%), blue for high humidity (>70%).
+
+        Args:
+            humidity: Humidity percentage (0-100)
+
+        Returns:
+            Color value in hex format (0xRRGGBB)
+        """
+        if humidity <= 30:
+            # Yellow for low humidity
+            return 0xFFFF00
+        elif humidity <= 70:
+            # Transition from yellow to blue (30% to 70%)
+            ratio = (humidity - 30) / 40  # 0 to 1
+            red = int(255 * (1 - ratio))
+            green = 255  # Keep green constant
+            blue = int(255 * ratio)
+        else:
+            # Blue for high humidity
+            return 0x0000FF
+
+        # Convert RGB to hex
+        return (red << 16) | (green << 8) | blue
+
     def show_camera_feed(self, buf, save_filename=None):
         # 将摄像头数据填充到canvas缓冲区
         #self.canvas_buf[:] = buf[:len(self.canvas_buf)]  # 假设buf与canvas分辨率匹配
@@ -583,17 +711,33 @@ class Screen(object):
         # Set mode to normal (shows progress from min to current value)
         gauge.set_mode(lv.bar.MODE.NORMAL)
 
-        # Create a label to display the current value
+        # Create a label to display the current value with big font
         label = lv.label(self.screen)
         label.set_text(str(min_val))
         label.set_style_text_color(lv.color_white(), 0)
 
+        # Use the big font if available
+        try:
+            label.set_style_text_font(self.myfont_cn, 0)
+            font_height = 24  # Approximate height for big font
+            #label.set_style_text_font(lv.font_montserrat_16, 0)
+            #font_height = 32  # Approximate height for big font
+        except Exception as e:
+            print(f"Exception setting big font: {e}")
+            # Fallback to larger montserrat font if big font fails
+            try:
+                label.set_style_text_font(lv.font_montserrat_16, 0)
+                font_height = 16
+            except:
+                font_height = 16  # Default fallback
+
+        print(f"Actual font size: {font_height}")
         # Position label initially at the start of the gauge
-        label.set_pos(x + 5, y + (height - 16) // 2)  # 16 is approximate font height
+        label.set_pos(x + 5, y + (height - font_height) // 2)
 
         return {'gauge': gauge, 'label': label, 'min_val': min_val, 'max_val': max_val}
 
-    def set_gauge_value(self, gauge_dict, value, text="", animated=True):
+    def set_gauge_value(self, gauge_dict, value, text="", animated=True, gauge_type="temperature"):
         """
         Set the current value of a gauge and display custom text.
 
@@ -602,6 +746,7 @@ class Screen(object):
             value: The numerical value to set for the gauge bar
             text: Custom text to display (if empty, displays the numerical value)
             animated: Whether to animate the value change (default: True)
+            gauge_type: Type of gauge - "temperature" or "humidity" (default: "temperature")
         """
         gauge = gauge_dict['gauge']
         label = gauge_dict['label']
@@ -611,6 +756,14 @@ class Screen(object):
         # Update gauge value
         anim_enable = lv.ANIM.ON if animated else lv.ANIM.OFF
         gauge.set_value(value, anim_enable)
+
+        # Set color for the gauge bar based on gauge type
+        if gauge_type == "humidity":
+            color_value = self.get_humidity_color(value)
+        else:  # default to temperature
+            color_value = self.get_temperature_color(value)
+        gauge.set_style_bg_color(lv.color_hex(color_value), lv.STATE.DEFAULT)
+        gauge.set_style_bg_color(lv.color_hex(color_value), lv.PART.INDICATOR)
 
         # Update label text (use custom text if provided, otherwise use the numerical value)
         display_text = text if text else str(value)
@@ -622,6 +775,24 @@ class Screen(object):
         gauge_y = gauge.get_y()
         gauge_height = gauge.get_height()
 
+        # Get the font height for proper positioning
+        try:
+            # Try to get the actual font height from the label's style
+            current_font = label.get_style_text_font(0)
+            if hasattr(current_font, 'line_height'):
+                font_height = current_font.line_height
+            else:
+                # Fallback based on which font we're likely using
+                try:
+                    if label.get_style_text_font(0) == self.myfont_cn:
+                        font_height = 24  # Big font
+                    else:
+                        font_height = 16  # Standard font
+                except:
+                    font_height = 16  # Default fallback
+        except:
+            font_height = 16  # Safe fallback
+
         # Calculate position based on value (as percentage of gauge width)
         if max_val > min_val:
             value_ratio = (value - min_val) / (max_val - min_val)
@@ -629,7 +800,9 @@ class Screen(object):
             label_x = gauge_x + int(gauge_width * value_ratio * 0.6)
 
             # If the position would put the label too far to the right, adjust it
-            label_width = len(display_text) * 8  # Approximate character width
+            # Adjust character width estimate based on font size
+            char_width = 12 if font_height > 16 else 8  # Bigger font = wider characters
+            label_width = len(display_text) * char_width
             if label_x + label_width > gauge_x + gauge_width - 5:
                 label_x = gauge_x + gauge_width - label_width - 5
 
@@ -639,7 +812,7 @@ class Screen(object):
         else:
             label_x = gauge_x + 5
 
-        label_y = gauge_y + (gauge_height - 16) // 2  # Center vertically
+        label_y = gauge_y + (gauge_height - font_height) // 2  # Center vertically
         label.set_pos(label_x, label_y)
 
     def print_lvgl_version(self):

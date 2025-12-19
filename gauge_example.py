@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Example usage of the gauge functionality in the Screen class.
+Example usage of the gauge and loading animation functionality in the Screen class.
 
 This demonstrates how to create and use LVGL gauges with the K10 Micropython library.
 The gauges now display the current value as text inside the bar.
+
+Also includes a Fallout-inspired loading animation with a spinning wheel and text.
 """
 
 # Example usage (this would be in your main script):
@@ -40,18 +42,18 @@ def example_gauge_usage():
 
 def animated_gauge_demo():
     """
-    Demo showing animated gauge changes with custom text display
+    Demo showing animated gauge changes with custom text display (bigger font)
     """
     import time
 
     screen = Screen()
     screen.init()
 
-    # Create a large gauge for demo
-    demo_gauge = screen.create_gauge(x=10, y=60, width=300, height=30, min_val=0, max_val=100)
+    # Create a large gauge for demo - now with bigger, more visible text
+    demo_gauge = screen.create_gauge(x=10, y=60, width=300, height=40, min_val=0, max_val=100)
     screen.show_draw()
 
-    # Animate from 0 to 100 with status text
+    # Animate from 0 to 100 with status text in BIG FONT
     status_levels = [
         (0, "EMPTY"), (10, "LOW"), (30, "OK"), (60, "GOOD"),
         (80, "HIGH"), (95, "FULL"), (100, "MAX")
@@ -62,7 +64,7 @@ def animated_gauge_demo():
         screen.show_draw()
         time.sleep(0.5)
 
-    # Animate back down showing numerical values
+    # Animate back down showing numerical values in BIG FONT
     for value in range(100, -1, -5):
         screen.set_gauge_value(demo_gauge, value, text="", animated=False)  # Show numbers
         screen.show_draw()
@@ -88,6 +90,28 @@ def version_info_demo():
     except Exception as e:
         print(f"Error accessing version components: {e}")
 
+def loading_animation_demo():
+    """
+    Demo showing the Fallout-inspired loading animation
+    """
+    import time
+
+    screen = Screen()
+    screen.init()
+
+    print("Showing loading animation for 5 seconds...")
+
+    # Show the loading animation (inspired by Fallout's vault dweller waiting)
+    loading_anim = screen.show_loading_animation(x=100, y=100, text="WORKING", color=0xFFFF00)
+
+    # Simulate some work
+    time.sleep(5)
+
+    # Hide the animation
+    screen.hide_loading_animation(loading_anim)
+
+    print("Loading animation hidden.")
+
 if __name__ == "__main__":
     print("Gauge Example with Value Text Display")
     print("====================================")
@@ -100,18 +124,29 @@ if __name__ == "__main__":
     print("   - 'text' parameter controls what text is displayed (optional)")
     print("   - If text is empty, displays the numerical value")
     print("   - Automatically updates both the gauge bar and the text label position")
+    print("3. show_loading_animation(x, y, size, text, color) - Shows Fallout-inspired loading animation")
+    print("   - Displays a spinning wheel with customizable text")
+    print("   - Returns dictionary with 'spinner' and 'label' for later removal")
+    print("4. hide_loading_animation(animation_dict) - Removes the loading animation")
     print()
     print("Features:")
     print("- Label text dynamically repositions based on gauge fill level")
     print("- Display custom text instead of numerical values")
+    print("- Uses bigger font (font_big.bin) for better visibility")
     print("- Text stays within gauge bounds and is always visible")
     print("- Smooth animations when changing values")
     print("- White text on dark background for good contrast")
+    print("- Fallout-inspired loading animation with spinning wheel")
     print()
     print("Example code:")
     print("my_gauge = screen.create_gauge(x=20, y=50, width=200, height=20, min_val=0, max_val=100)")
     print("screen.set_gauge_value(my_gauge, 75, text='HIGH')  # Shows 'HIGH' positioned along the bar")
     print("screen.set_gauge_value(my_gauge, 90)  # Shows '90' (default numerical display)")
+    print()
+    print("Loading Animation:")
+    print("loading_anim = screen.show_loading_animation(x=100, y=100, text='WORKING')")
+    print("screen.hide_loading_animation(loading_anim)  # Remove when done")
+    print("loading_animation_demo()      # Demo of loading animation")
     print()
     print("Version info:")
     print("screen.print_lvgl_version()  # Prints LVGL version information")
