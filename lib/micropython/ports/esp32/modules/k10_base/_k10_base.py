@@ -20,7 +20,7 @@ gc.collect()
 50以上的使用的是扩展IO芯片
 P0  = 1
 P1  = 2
-P2  = P07 = 57
+P2  = P07 = 57f
 P3  = P16 = 66
 P4  = P15 = 65
 P5  = P14 = 64
@@ -433,7 +433,7 @@ class Screen(object):
         area.set_height(h)
         lv.draw_rect(self.layer, self.desc, area)
         pass
-    def show_camera_feed(self, buf):
+    def show_camera_feed(self, buf, save_filename=None):
         # 将摄像头数据填充到canvas缓冲区
         #self.canvas_buf[:] = buf[:len(self.canvas_buf)]  # 假设buf与canvas分辨率匹配
         #self.show_draw()
@@ -448,6 +448,10 @@ class Screen(object):
         lv.draw_image(self.layer,self.desc, area)
         lv.screen_load(self.screen)
 
+        # Save the raw buffer if filename provided
+        if save_filename:
+            self.save_raw_buffer(buf, save_filename)
+
     def show_camera_img(self,buf):
         lv.draw_sw_rgb565_swap(buf,240*320*2)
         self.img_dsc.data = buf
@@ -456,7 +460,215 @@ class Screen(object):
 
     def show_camera(self,camera):
         self.timer =lv.timer_create(lambda t: self.show_camera_img(camera.capture()), 50, None)
-        
+
+    def save_displayed_image(self, filename, width=240, height=320):
+        """
+        Save the currently displayed camera image as a BMP file.
+
+        Args:
+            filename: Path to save the BMP file
+            width: Image width in pixels
+            height: Image height in pixels
+        """
+        try:
+            # Take a snapshot of the current screen
+            draw_buf = lv.snapshot_take(lv.screen_active(), lv.COLOR_FORMAT.RGB565)
+
+            if draw_buf and hasattr(draw_buf, 'data') and draw_buf.data:
+                # BMP header for RGB565 format
+                # BMP files are stored upside down, so we need to flip the rows
+                bmp_header = self._create_bmp_header(width, height, 16)  # 16 bits per pixel for RGB565
+
+                with open(filename, 'wb') as f:
+                    f.write(bmp_header)
+
+                    # Get the raw data - for RGB565, each pixel is 2 bytes
+                    data = draw_buf.data
+                    data_size = len(data) if hasattr(data, '__len__') else draw_buf.data_size
+
+                    print(f"Saving BMP: {width}x{height}, data size: {data_size} bytes")
+
+                    # Write the image data (RGB565 format)
+                    if isinstance(data, (bytes, bytearray)):
+                        f.write(data)
+                    else:
+                        # If data is not directly accessible, we need a different approach
+                        print("Warning: Could not access raw image data directly")
+                        return False
+
+                print(f"BMP image saved to {filename} ({len(bmp_header) + data_size} bytes)")
+                return True
+            else:
+                print("Failed to capture snapshot or no data available")
+                return False
+
+        except Exception as e:
+            print(f"Error saving BMP image: {e}")
+            return False
+
+    def _create_bmp_header(self, width, height, bits_per_pixel):
+        """Create a BMP file header for the given dimensions and bit depth."""
+        # BMP Header (14 bytes)
+        file_size = 14 + 40 + (width * height * bits_per_pixel // 8)
+        bmp_header = bytearray([
+            0x42, 0x4D,          # BM
+            file_size & 0xFF, (file_size >> 8) & 0xFF, (file_size >> 16) & 0xFF, (file_size >> 24) & 0xFF,  # File size
+            0x00, 0x00,          # Reserved
+            0x00, 0x00,          # Reserved
+            0x36, 0x00, 0x00, 0x00  # Data offset (54 bytes for header)
+        ])
+
+        # DIB Header (40 bytes)
+        dib_header = bytearray([
+            0x28, 0x00, 0x00, 0x00,  # Header size
+            width & 0xFF, (width >> 8) & 0xFF, (width >> 16) & 0xFF, (width >> 24) & 0xFF,  # Width
+            height & 0xFF, (height >> 8) & 0xFF, (height >> 16) & 0xFF, (height >> 24) & 0xFF,  # Height
+            0x01, 0x00,          # Planes
+            bits_per_pixel & 0xFF, (bits_per_pixel >> 8) & 0xFF,  # Bits per pixel
+            0x00, 0x00, 0x00, 0x00,  # Compression (BI_RGB)
+            0x00, 0x00, 0x00, 0x00,  # Image size (can be 0 for BI_RGB)
+            0x00, 0x00, 0x00, 0x00,  # X pixels per meter
+            0x00, 0x00, 0x00, 0x00,  # Y pixels per meter
+            0x00, 0x00, 0x00, 0x00,  # Colors used
+            0x00, 0x00, 0x00, 0x00   # Important colors
+        ])
+
+        return bmp_header + dib_header
+
+
+    def save_raw_buffer(self, buf, filename):
+        """
+        Save the raw camera buffer directly to file.
+
+        Args:
+            buf: Camera buffer data
+            filename: Path to save the file
+        """
+        try:
+            with open(filename, 'wb') as f:
+                f.write(buf)
+            print(f"Raw buffer saved to {filename} ({len(buf)} bytes)")
+        except Exception as e:
+            print(f"Error saving raw buffer: {e}")
+
+    def create_gauge(self, x=0, y=0, width=200, height=20, min_val=0, max_val=100):
+        """
+        Create and display an LVGL gauge (bar widget) with value text display.
+
+        Args:
+            x: X position on screen
+            y: Y position on screen
+            width: Width of the gauge
+            height: Height of the gauge
+            min_val: Minimum value (default: 0)
+            max_val: Maximum value (default: 100)
+
+        Returns:
+            Dictionary containing the gauge bar, its associated label, and range values
+            {'gauge': lv.bar, 'label': lv.label, 'min_val': int, 'max_val': int}
+        """
+        # Create a bar widget (acts as a gauge in LVGL)
+        gauge = lv.bar(self.screen)
+
+        # Set position and size
+        gauge.set_pos(x, y)
+        gauge.set_size(width, height)
+
+        # Set the range (min and max values)
+        gauge.set_range(min_val, max_val)
+
+        # Set initial value to minimum
+        gauge.set_value(min_val, lv.ANIM.OFF)
+
+        # Set mode to normal (shows progress from min to current value)
+        gauge.set_mode(lv.bar.MODE.NORMAL)
+
+        # Create a label to display the current value
+        label = lv.label(self.screen)
+        label.set_text(str(min_val))
+        label.set_style_text_color(lv.color_white(), 0)
+
+        # Position label initially at the start of the gauge
+        label.set_pos(x + 5, y + (height - 16) // 2)  # 16 is approximate font height
+
+        return {'gauge': gauge, 'label': label, 'min_val': min_val, 'max_val': max_val}
+
+    def set_gauge_value(self, gauge_dict, value, text="", animated=True):
+        """
+        Set the current value of a gauge and display custom text.
+
+        Args:
+            gauge_dict: The dictionary returned by create_gauge containing 'gauge', 'label', 'min_val', 'max_val'
+            value: The numerical value to set for the gauge bar
+            text: Custom text to display (if empty, displays the numerical value)
+            animated: Whether to animate the value change (default: True)
+        """
+        gauge = gauge_dict['gauge']
+        label = gauge_dict['label']
+        min_val = gauge_dict['min_val']
+        max_val = gauge_dict['max_val']
+
+        # Update gauge value
+        anim_enable = lv.ANIM.ON if animated else lv.ANIM.OFF
+        gauge.set_value(value, anim_enable)
+
+        # Update label text (use custom text if provided, otherwise use the numerical value)
+        display_text = text if text else str(value)
+        label.set_text(display_text)
+
+        # Calculate new label position based on gauge value
+        gauge_width = gauge.get_width()
+        gauge_x = gauge.get_x()
+        gauge_y = gauge.get_y()
+        gauge_height = gauge.get_height()
+
+        # Calculate position based on value (as percentage of gauge width)
+        if max_val > min_val:
+            value_ratio = (value - min_val) / (max_val - min_val)
+            # Position label at 60% of the filled area to keep it within the filled portion
+            label_x = gauge_x + int(gauge_width * value_ratio * 0.6)
+
+            # If the position would put the label too far to the right, adjust it
+            label_width = len(display_text) * 8  # Approximate character width
+            if label_x + label_width > gauge_x + gauge_width - 5:
+                label_x = gauge_x + gauge_width - label_width - 5
+
+            # Ensure label doesn't go too far left either
+            if label_x < gauge_x + 5:
+                label_x = gauge_x + 5
+        else:
+            label_x = gauge_x + 5
+
+        label_y = gauge_y + (gauge_height - 16) // 2  # Center vertically
+        label.set_pos(label_x, label_y)
+
+    def print_lvgl_version(self):
+        """
+        Print the current LVGL version information.
+
+        Returns:
+            str: The version string
+        """
+        try:
+            major = lv.version_major()
+            minor = lv.version_minor()
+            patch = lv.version_patch()
+            version_str = f"LVGL Version: {major}.{minor}.{patch}"
+            print(version_str)
+
+            # Also print the full version info if available
+            try:
+                info = lv.version_info()
+                print(f"LVGL Info: {info}")
+            except:
+                pass
+
+            return version_str
+        except Exception as e:
+            error_msg = f"Error getting LVGL version: {e}"
+            print(error_msg)
+            return error_msg
+
     def deinit(self):
         if hasattr(self, 'timer') and self.timer:
             try:
@@ -465,12 +677,48 @@ class Screen(object):
             except:
                 pass
 
-        
-
 class Camera(object):
+    # Frame size to resolution mapping (width, height)
+    FRAME_RESOLUTIONS = {
+        camera.FRAME_96X96: (96, 96),
+        camera.FRAME_QQVGA: (160, 120),
+        camera.FRAME_QCIF: (176, 144),
+        camera.FRAME_HQVGA: (240, 176),
+        camera.FRAME_240X240: (240, 240),
+        camera.FRAME_QVGA: (320, 240),
+        camera.FRAME_CIF: (400, 296),
+        camera.FRAME_HVGA: (480, 320),
+        camera.FRAME_VGA: (640, 480),
+        camera.FRAME_SVGA: (800, 600),
+        camera.FRAME_XGA: (1024, 768),
+        camera.FRAME_HD: (1280, 720),
+        camera.FRAME_SXGA: (1280, 1024),
+        camera.FRAME_UXGA: (1600, 1200),
+        camera.FRAME_FHD: (1920, 1080),
+        camera.FRAME_P_HD: (720, 1280),
+        camera.FRAME_P_3MP: (864, 1536),
+        camera.FRAME_QXGA: (2048, 1536),
+        camera.FRAME_QHD: (2560, 1440),
+        camera.FRAME_WQXGA: (2560, 1600),
+        camera.FRAME_P_FHD: (1080, 1920),
+        camera.FRAME_QSXGA: (2560, 1920),
+    }
+    
     def __init__(self):
         self.cam = camera
-    def init(self):
+        self.frame_size = camera.FRAME_HVGA  # Default
+        self.pixel_format = camera.RGB565  # Default
+        self.width = 480  # Default for HVGA
+        self.height = 320  # Default for HVGA
+    
+    def init(self, framesize=None, format=None):
+        """
+        Initialize the camera.
+        
+        Args:
+            framesize: Optional frame size constant (e.g., camera.FRAME_HVGA)
+            format: Optional pixel format (e.g., camera.RGB565, camera.YUV422, camera.GRAYSCALE)
+        """
         #复位摄像头
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
         temp = myi2c.readfrom_mem(0x20, 0x06, 1)
@@ -480,14 +728,152 @@ class Camera(object):
         time.sleep(0.1)
         temp = myi2c.readfrom_mem(0x20, 0x02, 1)
         myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x02)]))
-        self.cam.init(0)
+        
+        # Store configuration
+        if framesize is not None:
+            self.frame_size = framesize
+        if format is not None:
+            self.pixel_format = format
+        
+        # Get resolution from frame size
+        if self.frame_size in self.FRAME_RESOLUTIONS:
+            self.width, self.height = self.FRAME_RESOLUTIONS[self.frame_size]
+        
+        # Initialize camera with stored config
+        # Note: camera.init() first arg is camera ID (0), then keyword args
+        if framesize is not None or format is not None:
+            self.cam.init(0, framesize=self.frame_size, format=self.pixel_format)
+        else:
+            self.cam.init(0)
+    
     def capture(self):
         return self.cam.capture()
     
-    def deinit(self):
-        self.can.deinit()
-      
+    def encode_jpeg(self, buf=None, quality=12):
+        """
+        Encode a raw image buffer to JPEG.
+        
+        Args:
+            buf: Optional image buffer from capture(). If None, captures a new frame.
+            quality: JPEG quality (0-100, higher is better quality)
+        
+        Returns:
+            JPEG encoded bytes, or False on error
+        """
+        
+        try:
+            # If no buffer provided, capture a new frame
+            if buf is None:
+                print("encode_jpeg buf is None, capturing...")
+                buf = self.capture()
+                time.sleep(0.1)
+                buffer = self.capture()
+                time.sleep(0.1)
+                buffer = self.capture()
+                lv.draw_sw_rgb565_swap(buffer,480*320*2)
+                print("encode_jpeg captured buf type:", type(buf), "len:", len(buf) if buf else "None")
 
+            if not buf:
+                print("encode_jpeg buf is False/None after capture")
+                return False
+            
+            # Check if buffer is already JPEG encoded
+            if len(buf) >= 2 and buf[0] == 0xFF and buf[1] == 0xD8:
+                print("encode_jpeg buf is JPEG")
+                return buf  # Already JPEG, return as-is
+            
+            print("encode_jpeg encode_jpeg")
+            # Encode raw format to JPEG
+            jpeg_buf = self.cam.encode_jpeg(
+                buf,                    # positional arg 1
+                self.width,             # positional arg 2
+                self.height,            # positional arg 3
+                self.pixel_format,      # positional arg 4
+                quality=quality         # keyword-only arg
+            )
+            print("encode_jpeg jpeg_buf", jpeg_buf)
+            return jpeg_buf
+        except Exception as e:
+            print("Error encoding JPEG: {}".format(e))
+            return False
+    
+    def save_to_file(self, filename, buf=None, quality=12):
+        """
+        Encode and save the captured image buffer to a JPEG file.
+        
+        Args:
+            filename: Path to the output file (e.g., '/image.jpg' or '/sd/image.jpg')
+            buf: Optional image buffer from capture(). If None, captures a new frame.
+            quality: JPEG quality (0-100, higher is better quality)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+
+        print("save_to_file called with filename={}, buf={}, quality={}".format(
+            filename, "None" if buf is None else "len={}".format(len(buf)), quality))
+
+        try:
+            # Encode to JPEG (handles both raw and already-JPEG buffers)
+            print("save_to_file: calling encode_jpeg...")
+            jpeg_buf = self.encode_jpeg(buf, quality)
+
+            if not jpeg_buf:
+                print("save_to_file: encode_jpeg failed")
+                return False
+
+            print("save_to_file: writing {} bytes to file {}".format(len(jpeg_buf), filename))
+
+            # Open file in binary write mode
+            with open(filename, 'wb') as f:
+                f.write(jpeg_buf)
+
+            print("save_to_file: successfully saved to file")
+            return True
+        except Exception as e:
+            print("Error saving image to file: {}".format(e))
+            return False
+
+    def setParameter(self, whitebalance=0, brightness=0):
+        """
+        Set camera white balance and brightness settings.
+
+        Args:
+            whitebalance (int): White balance mode (0-4):
+                0 - auto (default)
+                1 - sunny
+                2 - cloudy
+                3 - office
+                4 - home
+            brightness (int): Brightness level (-2 to 2):
+                -2 - darkest
+                0 - default
+                2 - brightest
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Set white balance
+            if whitebalance < 0 or whitebalance > 4:
+                print("Error: whitebalance must be between 0 and 4")
+                return False
+            self.cam.whitebalance(whitebalance)
+
+            # Set brightness
+            if brightness < -2 or brightness > 2:
+                print("Error: brightness must be between -2 and 2")
+                return False
+            self.cam.brightness(brightness)
+
+            return True
+        except Exception as e:
+            print("Error setting camera settings:", e)
+            return False
+
+    def deinit(self):
+        self.cam.deinit()
+      
 '''
 六轴 educore定时器
 '''
@@ -1131,6 +1517,8 @@ class TF_card(object):
             vfs.mount(self.sd, "/sd")
         except:
             print("SD card not detected")
+
+
 
 
 

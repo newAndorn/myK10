@@ -25,6 +25,7 @@
 #include "spi_flash_mmap.h"
 #include "esp_camera.h"
 #include "esp_log.h"
+#include "img_converters.h"
 
 #define STATIC static
 
@@ -367,6 +368,74 @@ STATIC mp_obj_t camera_whitebalance(mp_obj_t what){
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(camera_whitebalance_obj, camera_whitebalance);
 
+STATIC mp_obj_t camera_encode_jpeg(mp_uint_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    enum {
+        ARG_buf,
+        ARG_width,
+        ARG_height,
+        ARG_format,
+        ARG_quality,
+    };
+
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_buf,     MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+        { MP_QSTR_width,  MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0} },
+        { MP_QSTR_height, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0} },
+        { MP_QSTR_format, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = PIXFORMAT_RGB565} },
+        { MP_QSTR_quality, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 12} },
+    };
+
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
+
+    // Get buffer
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(args[ARG_buf].u_obj, &bufinfo, MP_BUFFER_READ);
+
+    // Get parameters
+    uint16_t width = args[ARG_width].u_int;
+    uint16_t height = args[ARG_height].u_int;
+    pixformat_t format = args[ARG_format].u_int;
+    uint8_t quality = args[ARG_quality].u_int;
+
+    ESP_LOGI(TAG, "camera_encode_jpeg: width=%d, height=%d, format=%d, quality=%d, buf_len=%d",
+             width, height, format, quality, bufinfo.len);
+
+    // Validate format
+    if (format == PIXFORMAT_JPEG) {
+        ESP_LOGE(TAG, "Input format cannot be JPEG");
+        mp_raise_ValueError(MP_ERROR_TEXT("Input format cannot be JPEG"));
+    }
+
+    // Validate quality (0-100 for fmt2jpg, but camera uses 0-63, so we'll use 0-100)
+    if (quality > 100) {
+        quality = 100;
+    }
+
+    // Encode to JPEG
+    uint8_t *jpg_buf = NULL;
+    size_t jpg_len = 0;
+
+    ESP_LOGI(TAG, "Calling fmt2jpg...");
+    bool success = fmt2jpg((uint8_t *)bufinfo.buf, bufinfo.len, width, height, format, quality, &jpg_buf, &jpg_len);
+
+    if (!success || !jpg_buf) {
+        ESP_LOGE(TAG, "JPEG encoding failed");
+        return mp_const_false;
+    }
+
+    ESP_LOGI(TAG, "JPEG encoding successful, output size: %d bytes", jpg_len);
+
+    // Create bytes object from JPEG buffer
+    mp_obj_t jpeg_bytes = mp_obj_new_bytes(jpg_buf, jpg_len);
+
+    // Free the JPEG buffer allocated by fmt2jpg
+    free(jpg_buf);
+
+    return jpeg_bytes;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(camera_encode_jpeg_obj, 4, camera_encode_jpeg);
+
 STATIC const mp_rom_map_elem_t camera_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_camera) },
 
@@ -382,6 +451,7 @@ STATIC const mp_rom_map_elem_t camera_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_brightness), MP_ROM_PTR(&camera_brightness_obj) },
     { MP_ROM_QSTR(MP_QSTR_speffect), MP_ROM_PTR(&camera_speffect_obj) },
     { MP_ROM_QSTR(MP_QSTR_whitebalance), MP_ROM_PTR(&camera_whitebalance_obj) },
+    { MP_ROM_QSTR(MP_QSTR_encode_jpeg), MP_ROM_PTR(&camera_encode_jpeg_obj) },
 
     // Constants
     { MP_ROM_QSTR(MP_QSTR_JPEG),            MP_ROM_INT(PIXFORMAT_JPEG) },
