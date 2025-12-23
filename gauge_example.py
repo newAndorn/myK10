@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Example usage of the gauge and loading animation functionality in the Screen class.
+Example usage of the gauge, ampere arc, and loading animation functionality in the Screen class.
 
 This demonstrates how to create and use LVGL gauges with the K10 Micropython library.
 The gauges now display the current value as text inside the bar.
+
+Includes an ampere arc widget centered at 0A with red for negative values (left) and green for positive values (right).
 
 Also includes a Fallout-inspired loading animation with a spinning wheel and text.
 """
@@ -112,6 +114,42 @@ def loading_animation_demo():
 
     print("Loading animation hidden.")
 
+def ampere_arc_demo():
+    """
+    Demo showing the ampere arc with positive and negative values
+    """
+    import time
+
+    screen = Screen()
+    screen.init()
+
+    print("Creating ampere arc centered at 0A...")
+
+    # Create an ampere arc centered at 0A with range -10A to +10A
+    ampere_arc = screen.create_ampere_arc(x=120, y=120, radius=80, min_val=-10, max_val=10)
+
+    print("Demonstrating different ampere values...")
+
+    # Test positive values (green)
+    positive_values = [0, 1.5, 3.2, 5.8, 8.1, 10]
+    for value in positive_values:
+        screen.set_ampere_arc_value(ampere_arc, value, animated=True)
+        print(f"Set to {value}A (green)")
+        time.sleep(1)
+
+    # Test negative values (red)
+    negative_values = [-1.2, -3.7, -6.4, -8.9, -10]
+    for value in negative_values:
+        screen.set_ampere_arc_value(ampere_arc, value, animated=True)
+        print(f"Set to {value}A (red)")
+        time.sleep(1)
+
+    # Back to zero
+    screen.set_ampere_arc_value(ampere_arc, 0, animated=True)
+    print("Back to 0A")
+
+    print("Ampere arc demo complete. Arc remains visible.")
+
 if __name__ == "__main__":
     print("Gauge Example with Value Text Display")
     print("====================================")
@@ -124,10 +162,15 @@ if __name__ == "__main__":
     print("   - 'text' parameter controls what text is displayed (optional)")
     print("   - If text is empty, displays the numerical value")
     print("   - Automatically updates both the gauge bar and the text label position")
-    print("3. show_loading_animation(x, y, size, text, color) - Shows Fallout-inspired loading animation")
+    print("3. create_ampere_arc(x, y, radius, min_val, max_val) - Creates ampere measurement arc")
+    print("   - Center at 0A, negative values (red) left, positive values (green) right")
+    print("   - Returns dictionary with 'arc', 'label', 'min_val', 'max_val'")
+    print("4. set_ampere_arc_value(arc_dict, value, animated) - Sets ampere arc value")
+    print("   - Updates arc position and color based on value sign")
+    print("5. show_loading_animation(x, y, size, text, color) - Shows Fallout-inspired loading animation")
     print("   - Displays a spinning wheel with customizable text")
     print("   - Returns dictionary with 'spinner' and 'label' for later removal")
-    print("4. hide_loading_animation(animation_dict) - Removes the loading animation")
+    print("6. hide_loading_animation(animation_dict) - Removes the loading animation")
     print()
     print("Features:")
     print("- Label text dynamically repositions based on gauge fill level")
@@ -136,6 +179,7 @@ if __name__ == "__main__":
     print("- Text stays within gauge bounds and is always visible")
     print("- Smooth animations when changing values")
     print("- White text on dark background for good contrast")
+    print("- Ampere arc widget with center-zero design and color-coded values")
     print("- Fallout-inspired loading animation with spinning wheel")
     print()
     print("Example code:")
@@ -147,6 +191,12 @@ if __name__ == "__main__":
     print("loading_anim = screen.show_loading_animation(x=100, y=100, text='WORKING')")
     print("screen.hide_loading_animation(loading_anim)  # Remove when done")
     print("loading_animation_demo()      # Demo of loading animation")
+    print()
+    print("Ampere Arc:")
+    print("ampere_arc = screen.create_ampere_arc(x=120, y=120, radius=80, min_val=-10, max_val=10)")
+    print("screen.set_ampere_arc_value(ampere_arc, 3.5)  # Shows 3.5A in green")
+    print("screen.set_ampere_arc_value(ampere_arc, -2.1)  # Shows -2.1A in red")
+    print("ampere_arc_demo()             # Demo of ampere arc")
     print()
     print("Version info:")
     print("screen.print_lvgl_version()  # Prints LVGL version information")
