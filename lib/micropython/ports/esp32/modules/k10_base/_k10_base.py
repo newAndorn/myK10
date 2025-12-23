@@ -803,7 +803,7 @@ class BMS:
         self._running = False
         print("BMS watch: stop requested")
 
-    def get_temperature_color(self, temperature):
+def get_temperature_color(self, temperature):
         """
         Calculate color based on temperature value.
         Blue for low temperatures (<15°C), green around 20°C, red for high temperatures (>25°C).
@@ -836,7 +836,7 @@ class BMS:
         # Convert RGB to hex
         return (red << 16) | (green << 8) | blue
 
-    def get_humidity_color(self, humidity):
+def get_humidity_color(self, humidity):
         """
         Calculate color based on humidity value.
         Yellow for low humidity (<30%), blue for high humidity (>70%).
@@ -863,7 +863,7 @@ class BMS:
         # Convert RGB to hex
         return (red << 16) | (green << 8) | blue
 
-    def show_camera_feed(self, buf, save_filename=None):
+def show_camera_feed(self, buf, save_filename=None):
         # 将摄像头数据填充到canvas缓冲区
         #self.canvas_buf[:] = buf[:len(self.canvas_buf)]  # 假设buf与canvas分辨率匹配
         #self.show_draw()
@@ -882,16 +882,16 @@ class BMS:
         if save_filename:
             self.save_raw_buffer(buf, save_filename)
 
-    def show_camera_img(self,buf):
+def show_camera_img(self,buf):
         lv.draw_sw_rgb565_swap(buf,240*320*2)
         self.img_dsc.data = buf
         self.img.set_src(self.img_dsc)
         lv.refr_now(None)
 
-    def show_camera(self,camera):
+def show_camera(self,camera):
         self.timer =lv.timer_create(lambda t: self.show_camera_img(camera.capture()), 50, None)
 
-    def save_displayed_image(self, filename, width=240, height=320):
+def save_displayed_image(self, filename, width=240, height=320):
         """
         Save the currently displayed camera image as a BMP file.
 
@@ -966,7 +966,7 @@ class BMS:
         return bmp_header + dib_header
 
 
-    def save_raw_buffer(self, buf, filename):
+def save_raw_buffer(self, buf, filename):
         """
         Save the raw camera buffer directly to file.
 
