@@ -1141,6 +1141,8 @@ class BMS:
         def _irq(event, data):
             if event == IRQ.IRQ_SCAN_RESULT:
                 addr_type, addr, adv_type, rssi, adv_data = data
+                if isinstance(adv_data, memoryview):
+                    adv_data = bytes(adv_data)
                 addr_hex = bytes(addr).hex()
                 print(f"\nDevice found - Addr: {addr_hex}, Type: {adv_type}, RSSI: {rssi}dBm")
                 print(f"Raw adv_data: {adv_data}")
@@ -1159,6 +1161,8 @@ class BMS:
                     adv_data_start = i + 2
                     adv_data_end = i + 1 + length
                     adv_data_bytes = adv_data[adv_data_start:adv_data_end]
+                    if isinstance(adv_data_bytes, memoryview):
+                        adv_data_bytes = bytes(adv_data_bytes)
                     
                     print(f"  AD Type: 0x{adv_type:02x}, Length: {length-1}, Data: {adv_data_bytes.hex()}")
                     
@@ -1167,12 +1171,12 @@ class BMS:
                         print("    - Flags:", " ".join(f"{b:08b}" for b in adv_data_bytes))
                     elif adv_type == 0x08:  # Shortened Local Name
                         try:
-                            print(f"    - Short Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                            print(f"    - Short Name: {adv_data_bytes.decode('ascii', 'replace')}")
                         except Exception as e:
                             print(f"    - Short Name (decode error): {e}")
                     elif adv_type == 0x09:  # Complete Local Name
                         try:
-                            print(f"    - Complete Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                            print(f"    - Complete Name: {adv_data_bytes.decode('ascii', 'replace')}")
                         except Exception as e:
                             print(f"    - Complete Name (decode error): {e}")
                     elif adv_type == 0xFF:  # Manufacturer Specific Data
@@ -1185,8 +1189,8 @@ class BMS:
                 if isinstance(name, (memoryview, bytes)):
                     try:
                         if isinstance(name, memoryview):
-                            name = name.tobytes()
-                        name = name.decode('utf-8', errors='ignore').rstrip('\x00')
+                            name = bytes(name)
+                        name = name.decode('utf-8', 'ignore').rstrip('\x00')
                     except Exception as e:
                         print(f"Name decode error: {e}")
                         name = None
