@@ -1141,31 +1141,64 @@ class BMS:
         def _irq(event, data):
             if event == IRQ.IRQ_SCAN_RESULT:
                 addr_type, addr, adv_type, rssi, adv_data = data
+                addr_hex = bytes(addr).hex()
+                print(f"\nDevice found - Addr: {addr_hex}, Type: {adv_type}, RSSI: {rssi}dBm")
+                print(f"Raw adv_data: {adv_data}")
+                
+                # Print adv_data in hex for inspection
+                print("adv_data hex:", " ".join(f"{b:02x}" for b in adv_data))
+                
+                # Try to parse the advertising data
+                i = 0
+                while i < len(adv_data):
+                    length = adv_data[i]
+                    if length == 0 or i + length > len(adv_data):
+                        break
+                        
+                    adv_type = adv_data[i + 1]
+                    adv_data_start = i + 2
+                    adv_data_end = i + 1 + length
+                    adv_data_bytes = adv_data[adv_data_start:adv_data_end]
+                    
+                    print(f"  AD Type: 0x{adv_type:02x}, Length: {length-1}, Data: {adv_data_bytes.hex()}")
+                    
+                    # Common AD Types
+                    if adv_type == 0x01:  # Flags
+                        print("    - Flags:", " ".join(f"{b:08b}" for b in adv_data_bytes))
+                    elif adv_type == 0x08:  # Shortened Local Name
+                        try:
+                            print(f"    - Short Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                        except Exception as e:
+                            print(f"    - Short Name (decode error): {e}")
+                    elif adv_type == 0x09:  # Complete Local Name
+                        try:
+                            print(f"    - Complete Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                        except Exception as e:
+                            print(f"    - Complete Name (decode error): {e}")
+                    elif adv_type == 0xFF:  # Manufacturer Specific Data
+                        print(f"    - Manufacturer Data: {adv_data_bytes.hex()}")
+                    
+                    i += 1 + length  # Move to next AD structure
+                
+                # Original name decoding for compatibility
                 name = decode_name(adv_data)
-
-                # Handle case where decode_name returns memoryview instead of string
-                if isinstance(name, memoryview):
+                if isinstance(name, (memoryview, bytes)):
                     try:
-                        name = name.tobytes().decode('utf-8', errors='ignore').rstrip('\x00')
-                    except:
-                        name = None
-                elif isinstance(name, bytes):
-                    try:
+                        if isinstance(name, memoryview):
+                            name = name.tobytes()
                         name = name.decode('utf-8', errors='ignore').rstrip('\x00')
-                    except:
+                    except Exception as e:
+                        print(f"Name decode error: {e}")
                         name = None
-
-                if name and len(name.strip()) > 0:
-                    addr_bytes = bytes(addr)
-                    if not any(d[2] == addr_bytes for d in devices):
+                
+                addr_bytes = bytes(addr)
+                if not any(d[2] == addr_bytes for d in devices):
+                    if name and name.strip():
+                        print(f"  Found: {name} (RSSI: {rssi})")
                         devices.append((name, addr_type, addr_bytes))
-                        print(f"  Found: {name} (RSSI: {rssi}) at {addr_bytes.hex()}")
-                elif name is None or len(str(name).strip()) == 0:
-                    # Device without name, still show address for debugging
-                    addr_bytes = bytes(addr)
-                    if not any(d[2] == addr_bytes for d in devices):
+                    else:
+                        print(f"  Found: <no name> (RSSI: {rssi}) at {addr_hex}")
                         devices.append((f"<no name>", addr_type, addr_bytes))
-                        print(f"  Found: <no name> (RSSI: {rssi}) at {addr_bytes.hex()}")
 
         ble.irq(_irq)
         print(f"Scanning for BLE devices for {duration} seconds...")
