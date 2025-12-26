@@ -15,9 +15,9 @@ from unihiker_k10 import camera
 from unihiker_k10 import acce
 from k10_base import WiFi
 from k10_base._k10_base import BMS
-from BMW import BMS_new
+from BMS import BMS_new
 
-
+import _thread
 import lvgl as lv
 
 from gauge_old import VerticalGauge
@@ -91,7 +91,32 @@ def button_b_pressed():
 
 def button_b_released():
     print("button_b_released")
+
+
+def watch_bluetooth_data(device_name="0421150164", poll_interval=5):
+    """
+    Watch bluetooth data from a BLE device using BMS_new class.
     
+    Args:
+        device_name: The name of the BLE device to connect to (default: "0421150164")
+        poll_interval: Seconds between data requests (default: 5)
+    
+    Returns:
+        BMS_new instance that is watching the device
+    """
+    print(f"Starting bluetooth watch for device: {device_name}")
+    
+    # Create BMS_new instance with the device name
+    bms_watcher = BMS_new(name=device_name.encode() if isinstance(device_name, str) else device_name, 
+                          poll_interval=poll_interval)
+    
+    # Start watching bluetooth data
+    bms_watcher.start()
+    
+    print(f"Bluetooth watcher started for device: {device_name}")
+    return bms_watcher
+
+
 def publish_values():
     global hum, temp, count, _client
     
@@ -244,71 +269,7 @@ def print_sensor_values():
     screen.set_gauge_value(gauge, int(temp), text=f"{temp:.2f} C")
     screen.set_gauge_value(gauge_hum, int(hum ), text=f"{hum:.2f} %", gauge_type="humidity")
 
-#     textbox_temp = TextBox(
-#         screen=screen,
-#         x=0,
-#         y=2,
-#         width=240,
-#         height=60,
-#         text="Temp: {} C".format(temp if temp is not None else "--"),
-#         font_size=30,
-#         text_color=0xFFFFFF,
-#         bg_color=0x827E7C,
-#         border_color=0x071A3D,
-#     )
-
-#     textbox_hum = TextBox(
-#         screen=screen,
-#         x=123,
-#         y=2,
-#         width=118,
-#         height=30,
-#         text="Hum: {} %".format(hum if hum is not None else "--"),
-#         font_size=40,
-#         text_color=0xFFFFFF,
-#         bg_color=0x827E7C,
-#         border_color=0x071A3D,
-#     )
-#     
-#     textbox_wifi = TextBox(
-#         screen=screen,
-#         x=0,
-#         y=35,
-#         width=118,
-#         height=30,
-#         text="Wifi: {}".format(wifi.status()),
-#         font_size=24,
-#         text_color=0xFFFFFF,
-#         bg_color=0x827E7C,
-#         border_color=0x071A3D,
-#     )
-#     
-#     textbox_count = TextBox(
-#         screen=screen,
-#         x=123,
-#         y=35,
-#         width=118,
-#         height=30,
-#         text="Count: {}".format(count),
-#         font_size=24,
-#         text_color=0xFFFFFF,
-#         bg_color=0x827E7C,
-#         border_color=0x071A3D,
-#     )
-
-#    textbox_hum.draw()
-#    textbox_temp.draw()
-#    textbox_wifi.draw()
-#    textbox_count.draw()
     screen.show_draw()
-    
-#    acc_x = round(acce.read_x(), 1)
-#    acc_y = round(acce.read_y(), 1)
-#    acc_z = round(acce.read_z(), 1)
-    
-    #print(acc_x)
-    #print(acc_y)
-    #print(acc_z)
 
 def maybe_reconnect_wifi():
     global _last_wifi_check_ms
@@ -346,7 +307,6 @@ def maybe_connect_mqtt():
     if _client is None:
         print("MQTT still offline.")
 
-
 def main():
     global count, wifi, gauge, gauge_hum, screen_status
     
@@ -361,8 +321,7 @@ def main():
     screen.show_bg(color=0x000000)
     screen.set_width(width=2)
             
-    #version = screen.print_lvgl_version()
-    version = "12345"
+    version = screen.print_lvgl_version()
     screen.draw_text(text=f"Starting. {version}", x=1, y=1, font_size=16, color=0x008000)
     screen.show_draw()
 
@@ -434,9 +393,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-
-
-
-
-

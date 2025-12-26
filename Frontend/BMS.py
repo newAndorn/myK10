@@ -1,4 +1,6 @@
-class BMS:
+import time
+
+class BMS_new:
     """
     Xiaoxiang/JBD BMS watcher over BLE (central mode).
     Provides scanning, start, and stop helpers for console logging.
@@ -61,55 +63,55 @@ class BMS:
                 addr_hex = bytes(addr).hex()
                 print(f"\nDevice found - Addr: {addr_hex}, Type: {adv_type}, RSSI: {rssi}dBm")
                 print(f"Raw adv_data: {adv_data}")
-                
+
                 # Print adv_data in hex for inspection
                 print("adv_data hex:", " ".join(f"{b:02x}" for b in adv_data))
-                
+
                 # Try to parse the advertising data
                 i = 0
                 while i < len(adv_data):
                     length = adv_data[i]
                     if length == 0 or i + length > len(adv_data):
                         break
-                        
+
                     adv_type = adv_data[i + 1]
                     adv_data_start = i + 2
                     adv_data_end = i + 1 + length
                     adv_data_bytes = adv_data[adv_data_start:adv_data_end]
                     if isinstance(adv_data_bytes, memoryview):
                         adv_data_bytes = bytes(adv_data_bytes)
-                    
+
                     print(f"  AD Type: 0x{adv_type:02x}, Length: {length-1}, Data: {adv_data_bytes.hex()}")
-                    
+
                     # Common AD Types
                     if adv_type == 0x01:  # Flags
                         print("    - Flags:", " ".join(f"{b:08b}" for b in adv_data_bytes))
                     elif adv_type == 0x08:  # Shortened Local Name
                         try:
-                            print(f"    - Short Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                            print(f"    - Short Name: {adv_data_bytes.decode('ascii', 'replace')}")
                         except Exception as e:
                             print(f"    - Short Name (decode error): {e}")
                     elif adv_type == 0x09:  # Complete Local Name
                         try:
-                            print(f"    - Complete Name: {adv_data_bytes.decode('ascii', errors='replace')}")
+                            print(f"    - Complete Name: {adv_data_bytes.decode('ascii', 'replace')}")
                         except Exception as e:
                             print(f"    - Complete Name (decode error): {e}")
                     elif adv_type == 0xFF:  # Manufacturer Specific Data
                         print(f"    - Manufacturer Data: {adv_data_bytes.hex()}")
-                    
+
                     i += 1 + length  # Move to next AD structure
-                
+
                 # Original name decoding for compatibility
                 name = decode_name(adv_data)
                 if isinstance(name, (memoryview, bytes)):
                     try:
                         if isinstance(name, memoryview):
                             name = bytes(name)
-                        name = name.decode('utf-8', errors='ignore').rstrip('\x00')
+                        name = name.decode('utf-8', 'ignore').rstrip('\x00')
                     except Exception as e:
                         print(f"Name decode error: {e}")
                         name = None
-                
+
                 addr_bytes = bytes(addr)
                 if not any(d[2] == addr_bytes for d in devices):
                     if name and name.strip():
