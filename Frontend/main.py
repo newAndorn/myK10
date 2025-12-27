@@ -15,7 +15,7 @@ from unihiker_k10 import camera
 from unihiker_k10 import acce
 from k10_base import WiFi
 from k10_base._k10_base import BMS
-from BMS import BMS_new
+from BMS import BMS_new, BMSData
 
 import _thread
 import lvgl as lv
@@ -93,28 +93,111 @@ def button_b_released():
     print("button_b_released")
 
 
-def watch_bluetooth_data(device_name="0421150164", poll_interval=5):
+# Global BMS watcher instance
+_bms_watcher = None
+_bms_last_data = None
+
+
+def on_bms_data_received(bms_data):
+    """
+    Callback function called when BMS data is received from advertisement.
+    
+    Args:
+        bms_data: BMSData object containing parsed battery information
+    """
+    global _bms_last_data
+    _bms_last_data = bms_data
+    
+    print(f"BMS Data Received:")
+    print(f"  Voltage: {bms_data.voltage:.2f}V")
+    print(f"  Current: {bms_data.current:.2f}A")
+    print(f"  Power: {bms_data.power:.2f}W")
+    print(f"  SOC: {bms_data.capacity_percent}%")
+    print(f"  Temp1: {bms_data.temp1:.1f}°C")
+    print(f"  RSSI: {bms_data.rssi}dBm")
+    
+    if bms_data.raw_data:
+        print(f"  Raw: {bms_data.raw_data.hex()}")
+    
+    # Optionally publish BMS data via MQTT
+    if _client is not None:
+        try:
+            bms_mqtt_data = {
+                "bms": {
+                    "voltage": bms_data.voltage,
+                    "current": bms_data.current,
+                    "power": bms_data.power,
+                    "soc": bms_data.capacity_percent,
+                    "temp1": bms_data.temp1,
+                    "temp2": bms_data.temp2,
+                    "rssi": bms_data.rssi
+                }
+            }
+            _client.publish(b"unihiker/bms", json.dumps(bms_mqtt_data))
+        except Exception as e:
+            print(f"Error publishing BMS data: {e}")
+
+
+def watch_bluetooth_data(device_name="0421150164", poll_interval=5, use_advertisements=True):
     """
     Watch bluetooth data from a BLE device using BMS_new class.
     
     Args:
         device_name: The name of the BLE device to connect to (default: "0421150164")
         poll_interval: Seconds between data requests (default: 5)
+        use_advertisements: If True, watch advertisement data (passive scan).
+                           If False, connect via GATT for detailed data.
     
     Returns:
         BMS_new instance that is watching the device
     """
-    print(f"Starting bluetooth watch for device: {device_name}")
+    global _bms_watcher
     
-    # Create BMS_new instance with the device name
-    bms_watcher = BMS_new(name=device_name.encode() if isinstance(device_name, str) else device_name, 
-                          poll_interval=poll_interval)
+    print(f"Starting bluetooth watch for device: {device_name}")
+    print(f"  Mode: {'Advertisement scanning' if use_advertisements else 'GATT connection'}")
+    
+    # Create BMS_new instance with the device name and callback
+    _bms_watcher = BMS_new(
+        name=device_name,
+        poll_interval=poll_interval,
+        on_data_callback=on_bms_data_received
+    )
     
     # Start watching bluetooth data
-    bms_watcher.start()
+    if use_advertisements:
+        # Watch advertisement data (passive, no connection needed)
+        _bms_watcher.start_advertisement_watch()
+    else:
+        # Connect via GATT for detailed BMS data
+        _bms_watcher.start()
     
     print(f"Bluetooth watcher started for device: {device_name}")
-    return bms_watcher
+    return _bms_watcher
+
+
+def stop_bluetooth_watch():
+    """
+    Stop the bluetooth BMS watcher.
+    """
+    global _bms_watcher
+    if _bms_watcher:
+        _bms_watcher.stop()
+        print("Bluetooth watcher stopped")
+    else:
+        print("No bluetooth watcher running")
+
+
+def get_bms_data():
+    """
+    Get the last received BMS data.
+    
+    Returns:
+        BMSData object or None if no data received yet
+    """
+    global _bms_last_data, _bms_watcher
+    if _bms_watcher:
+        return _bms_watcher.last_data
+    return _bms_last_data
 
 
 def publish_values():
@@ -310,8 +393,8 @@ def maybe_connect_mqtt():
 def main():
     global count, wifi, gauge, gauge_hum, screen_status
     
-    print("BLE test")  
-    devices = BMS_new.scan_devices(duration=15)
+    #print("BLE test")  
+    #devices = BMS_new.scan_devices(duration=15)
         
     print("Starting system...")  
     wifi = WiFi()
