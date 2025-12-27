@@ -390,13 +390,62 @@ def maybe_connect_mqtt():
     if _client is None:
         print("MQTT still offline.")
 
-def main():
-    global count, wifi, gauge, gauge_hum, screen_status
+def read_bms_once(device_name="0421150164", timeout=30):
+    """
+    Read BMS data once (blocking) and disable Bluetooth when done.
     
-    #print("BLE test")  
-    #devices = BMS_new.scan_devices(duration=15)
+    Args:
+        device_name: Name of the BMS device
+        timeout: Maximum time to wait for data
         
-    print("Starting system...")  
+    Returns:
+        BMSData object or None if failed
+    """
+    global _bms_last_data
+    
+    print("=" * 40)
+    print("Reading BMS data from device: %s" % device_name)
+    print("=" * 40)
+    
+    # Create BMS instance and read data once
+    bms = BMS_new(name=device_name)
+    data = bms.read_once(timeout=timeout)
+    
+    if data:
+        _bms_last_data = data
+        print("BMS data retrieved successfully:")
+        print("  Voltage: %.2fV" % data.voltage)
+        print("  Current: %.2fA" % data.current)
+        print("  Power: %.2fW" % data.power)
+        print("  SOC: %d%%" % data.capacity_percent)
+        print("  Temp: %.1f°C" % data.temp1)
+    else:
+        print("Failed to read BMS data")
+    
+    # Disable Bluetooth to free resources for WiFi
+    print("Disabling Bluetooth...")
+    BMS_new.disable_bluetooth()
+    time.sleep(0.5)  # Give time for BLE to fully stop
+    
+    print("=" * 40)
+    return data
+
+
+def main():
+    global count, wifi, gauge, gauge_hum, screen_status, _bms_last_data
+    
+    # ===== PHASE 1: Read BMS data via Bluetooth =====
+    # Must do this BEFORE starting WiFi (ESP32 limitation)
+    print("Phase 1: Reading BMS data...")
+    bms_data = read_bms_once("0421150164", timeout=30)
+    
+    if bms_data:
+        print("BMS: %.2fV, %d%% SOC" % (bms_data.voltage, bms_data.capacity_percent))
+    else:
+        print("BMS: No data (device not found or timeout)")
+    
+    # ===== PHASE 2: Start WiFi and normal program =====
+    print("\nPhase 2: Starting WiFi and main program...")
     wifi = WiFi()
     
     # Initialize screen regardless of connectivity

@@ -1,5 +1,11 @@
 import time
 
+
+def bytes_to_hex_string(data):
+    """Convert bytes to a space-separated hex string."""
+    return ' '.join('%02x' % byte for byte in data)
+
+
 class BMSData:
     """Data class to hold parsed BMS information."""
     
@@ -340,9 +346,9 @@ class BMS_new:
                 parsed = BMS_new.parse_advertisement_data(adv_data)
                 name = parsed.get('name')
                 
-                print(f"\nDevice found - Addr: {addr_hex}, Type: {adv_type}, RSSI: {rssi}dBm")
-                print(f"  Name: {name}")
-                print(f"  adv_data hex: {' '.join(f'{b:02x}' for b in adv_data)}")
+                print("\nDevice found - Addr: %s, Type: %s, RSSI: %sdBm" % (addr_hex, adv_type, rssi))
+                print("  Name: %s" % name)
+                print("  adv_data hex: %s" % bytes_to_hex_string(adv_data))
                 
                 if parsed.get('manufacturer_data'):
                     mfr = parsed['manufacturer_data']
@@ -425,8 +431,8 @@ class BMS_new:
                 if not target_match:
                     return
                     
-                print(f"\n[{name}] RSSI: {rssi}dBm")
-                print(f"  Raw: {' '.join(f'{b:02x}' for b in adv_data)}")
+                print("\n[%s] RSSI: %sdBm" % (name, rssi))
+                print("  Raw: %s" % bytes_to_hex_string(adv_data))
                 
                 # Store RSSI
                 self.last_data.rssi = rssi
@@ -615,12 +621,258 @@ class BMS_new:
             print("BMS watch: failed to start thread:", e)
             self._running = False
 
-    def stop(self):
+    def stop(self, disable_bluetooth=True):
         """
-        Stop the BMS watch loop. The background thread will exit after the next poll.
+        Stop the BMS watch loop and optionally disable Bluetooth.
+        
+        Args:
+            disable_bluetooth: If True, deactivate BLE radio to allow WiFi (default: True)
         """
         if not self._running:
             print("BMS watch is not running")
-            return
-        self._running = False
-        print("BMS watch: stop requested")
+        else:
+            self._running = False
+            print("BMS watch: stop requested")
+        
+        # Wait a moment for the thread to finish
+        time.sleep(0.5)
+        
+        if disable_bluetooth:
+            self.disable_bluetooth()
+    
+    @staticmethod
+    def disable_bluetooth():
+        """Disable Bluetooth radio to free resources for WiFi."""
+        try:
+            import bluetooth
+            ble = bluetooth.BLE()
+            ble.active(False)
+            print("Bluetooth disabled")
+        except Exception as e:
+            print("Error disabling Bluetooth: %s" % e)
+    
+    @staticmethod
+    def enable_bluetooth():
+        """Enable Bluetooth radio."""
+        try:
+            import bluetooth
+            ble = bluetooth.BLE()
+            ble.active(True)
+            print("Bluetooth enabled")
+        except Exception as e:
+            print("Error enabling Bluetooth: %s" % e)
+
+    def read_once(self, timeout=30, scan_timeout=15, max_connect_retries=3):
+        """
+        Connect to BMS, read data once, and disconnect.
+        This is a blocking call that returns the BMS data.
+        
+        Args:
+            timeout: Maximum time to wait for data after connection (default: 30)
+            scan_timeout: How long to scan for the device on each attempt (default: 15)
+            max_connect_retries: Number of connection attempts (default: 3)
+            
+        Returns:
+            BMSData object with battery info, or None if failed
+        """
+        print("BMS read_once: Looking for device '%s'..." % self.name_str)
+        print("  Scan timeout: %d seconds, Max retries: %d" % (scan_timeout, max_connect_retries))
+        
+        try:
+            from mpython_ble.application.centeral import Centeral
+            from bluetooth import UUID
+        except Exception as e:
+            print("BMS read_once: BLE modules not available: %s" % e)
+            return None
+
+        if self.name is None and self.addr is None:
+            print("BMS read_once: ERROR - provide either 'name' or 'addr'")
+            return None
+
+        # First, scan to find the device address (more reliable than name matching)
+        device_addr = self.addr
+        device_addr_type = 0
+        
+        if device_addr is None:
+            print("BMS read_once: Scanning to find device address...")
+            for scan_attempt in range(max_connect_retries):
+                print("  Scan attempt %d/%d (duration: %ds)..." % (scan_attempt + 1, max_connect_retries, scan_timeout))
+                
+                try:
+                    import bluetooth
+                    from mpython_ble.const import IRQ
+                    
+                    ble = bluetooth.BLE()
+                    ble.active(True)
+                    found_device = None
+                    
+                    def _scan_irq(event, data):
+                        nonlocal found_device
+                        if found_device:
+                            return
+                        if event == IRQ.IRQ_SCAN_RESULT:
+                            addr_type, addr, adv_type, rssi, adv_data = data
+                            if isinstance(adv_data, memoryview):
+                                adv_data = bytes(adv_data)
+                            
+                            # Parse to get name
+                            parsed = self.parse_advertisement_data(adv_data)
+                            name = parsed.get('name')
+                            
+                            # Check if this is our device
+                            if name and self.name_str:
+                                if self.name_str in name or name in self.name_str:
+                                    # BLE address is in little-endian, reverse it for correct order
+                                    addr_bytes = bytes(addr)
+                                    addr_reversed = bytes(reversed(addr_bytes))
+                                    found_device = (addr_type, addr_reversed, name, rssi)
+                                    print("  FOUND: %s (RSSI: %d dBm)" % (name, rssi))
+                                    print("  Address (raw): %s" % addr_bytes.hex())
+                                    print("  Address (reversed): %s" % addr_reversed.hex())
+                    
+                    ble.irq(_scan_irq)
+                    ble.gap_scan(int(scan_timeout * 1000), 30000, 30000)
+                    
+                    # Wait for scan to complete or device to be found
+                    scan_start = time.time()
+                    while not found_device and (time.time() - scan_start) < scan_timeout + 1:
+                        time.sleep(0.2)
+                    
+                    ble.gap_scan(None)
+                    ble.active(False)
+                    
+                    if found_device:
+                        device_addr_type, device_addr, found_name, rssi = found_device
+                        print("  Device found! Address: %s" % device_addr.hex())
+                        break
+                    else:
+                        print("  Device not found in this scan")
+                        if scan_attempt < max_connect_retries - 1:
+                            print("  Waiting 2 seconds before retry...")
+                            time.sleep(2)
+                            
+                except Exception as e:
+                    print("  Scan error: %s" % e)
+                    if scan_attempt < max_connect_retries - 1:
+                        time.sleep(2)
+        
+        if device_addr is None:
+            print("BMS read_once: Device not found after %d scan attempts" % max_connect_retries)
+            return None
+
+        # Now try to connect using the address
+        center = Centeral()
+        result_data = None
+        data_received = False
+        profile = None
+
+        for connect_attempt in range(max_connect_retries):
+            print("BMS read_once: Connection attempt %d/%d..." % (connect_attempt + 1, max_connect_retries))
+            
+            try:
+                profile = center.connect(addr=device_addr)
+                if profile:
+                    print("BMS read_once: Connected successfully!")
+                    break
+                else:
+                    print("  Connection failed")
+            except Exception as e:
+                print("  Connection error: %s" % e)
+            
+            if connect_attempt < max_connect_retries - 1:
+                print("  Waiting 2 seconds before retry...")
+                time.sleep(2)
+
+        if profile is None:
+            print("BMS read_once: Failed to connect after %d attempts" % max_connect_retries)
+            return None
+
+        print("BMS read_once: connected, discovering UART characteristic...")
+
+        uart_char = None
+        uart_uuid = UUID(self.UART_UUID_STR)
+
+        for service in profile.services:
+            for ch in service.characteristics:
+                try:
+                    if ch.uuid == uart_uuid:
+                        uart_char = ch
+                        break
+                except Exception:
+                    if str(ch.uuid).lower() == self.UART_UUID_STR:
+                        uart_char = ch
+                        break
+            if uart_char:
+                break
+
+        if uart_char is None:
+            print("BMS read_once: UART characteristic not found")
+            center.disconnect()
+            return None
+
+        print("BMS read_once: using characteristic handle %s" % uart_char.value_handle)
+
+        def _notify_cb(value_handle, data):
+            nonlocal result_data, data_received
+            print("BMS read_once notify: %s" % data.hex())
+            
+            # Try to parse as JBD packet
+            if len(data) > 4 and data[0] == self.PACKET_START:
+                pkt_type = data[1]
+                pkt_status = data[2]
+                data_len = data[3]
+                pkt_data = data[4:4 + data_len]
+                
+                if pkt_type == self.TYPE_BASIC_INFO:
+                    bms = self.parse_jbd_basic_info(pkt_data)
+                    if bms:
+                        result_data = bms
+                        self.last_data = bms
+                        data_received = True
+                        print("BMS read_once: Parsed basic info: %s" % bms)
+                elif pkt_type == self.TYPE_CELL_INFO:
+                    bms = self.parse_jbd_cell_info(pkt_data, result_data or self.last_data)
+                    if bms:
+                        result_data = bms
+                        self.last_data = bms
+                        print("BMS read_once: Parsed cell info")
+
+        center.notify_callback(_notify_cb)
+
+        # Send request and wait for response
+        start_time = time.time()
+        attempts = 0
+        max_attempts = 3
+        
+        while not data_received and attempts < max_attempts:
+            try:
+                print("BMS read_once: sending request (attempt %d/%d)..." % (attempts + 1, max_attempts))
+                center.characteristic_write(uart_char.value_handle, self.REQUEST_FRAME)
+            except Exception as e:
+                print("BMS read_once: write failed: %s" % e)
+                attempts += 1
+                continue
+            
+            # Wait for response
+            wait_start = time.time()
+            while not data_received and (time.time() - wait_start) < 5:
+                time.sleep(0.1)
+            
+            attempts += 1
+            
+            if (time.time() - start_time) >= timeout:
+                print("BMS read_once: timeout")
+                break
+
+        print("BMS read_once: disconnecting...")
+        try:
+            center.disconnect()
+        except Exception:
+            pass
+        
+        if result_data:
+            print("BMS read_once: Success! Got data: %s" % result_data)
+        else:
+            print("BMS read_once: No data received")
+            
+        return result_data
