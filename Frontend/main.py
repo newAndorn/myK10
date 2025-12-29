@@ -20,8 +20,8 @@ from BMS import BMS_new, BMSData
 import _thread
 import lvgl as lv
 
-from gauge_old import VerticalGauge
-from textBox import TextBox
+import asyncio
+import aioble
 
 WIFI_SSID = "andorn12"
 WIFI_PASSWORD = "GardenRoute11"
@@ -390,6 +390,279 @@ def maybe_connect_mqtt():
     if _client is None:
         print("MQTT still offline.")
 
+async def scan_ble_devices(duration_seconds=10, target_name=None):
+    """
+    Scan for BLE devices using aioble library.
+    
+    Args:
+        duration_seconds: How long to scan in seconds (default: 10)
+        target_name: Optional device name to look for (e.g., "0421150164")
+        
+    Returns:
+        List of discovered devices as tuples (name, address, rssi, services)
+    """
+    print("=" * 40)
+    print("Starting BLE scan using aioble...")
+    print("  Duration: %d seconds" % duration_seconds)
+    if target_name:
+        print("  Looking for: %s" % target_name)
+    print("=" * 40)
+    
+    devices = []
+    target_device = None
+    
+    try:
+        # Scan for the specified duration
+        async with aioble.scan(
+            duration_ms=duration_seconds * 1000,
+            interval_us=30000,
+            window_us=30000,
+            active=True
+        ) as scanner:
+            async for result in scanner:
+                # Get device name
+                name = result.name() or ""
+                addr = result.device.addr_hex()
+                rssi = result.rssi
+                
+                # Get advertised services
+                services = []
+                for uuid in result.services():
+                    services.append(str(uuid))
+                
+                # Get manufacturer data if available
+                try:
+                    mfr_data = result.manufacturer()
+                except Exception as e:
+                    print("  Error getting manufacturer data: %s" % e)
+                    mfr_data = None
+
+                # Print device info
+                print("\nDevice found:")
+                print("  Name: %s" % (name if name else "<no name>"))
+                print("  Address: %s" % addr)
+                print("  RSSI: %d dBm" % rssi)
+                if services:
+                    print("  Services: %s" % services)
+                if mfr_data:
+                    try:
+                        # Handle different manufacturer data formats
+                        if isinstance(mfr_data, tuple) and len(mfr_data) >= 2:
+                            mfr_id, mfr_bytes = mfr_data
+                            print("  Manufacturer: ID=%04x Data=%s" % (mfr_id, mfr_bytes.hex()))
+                        else:
+                            # mfr_data might be bytes directly
+                            print("  Manufacturer: %s" % (mfr_data.hex() if isinstance(mfr_data, bytes) else str(mfr_data)))
+                    except Exception as e:
+                        print("  Error unpacking manufacturer data: %s" % e)
+                
+                # Check if this is our target device
+                if target_name and target_name in name:
+                    print("  *** TARGET DEVICE FOUND! ***")
+                    target_device = (name, addr, rssi, result.device, mfr_data)
+                
+                # Add to list if not already present
+                if not any(d[1] == addr for d in devices):
+                    devices.append((name, addr, rssi, services))
+                    
+    except Exception as e:
+        print("Scan error: %s" % e)
+    
+    print("\n" + "=" * 40)
+    print("Scan complete. Found %d device(s)" % len(devices))
+    print("=" * 40)
+    
+    return devices, target_device
+
+
+async def scan_and_connect_bms(device_name="0421150164", scan_duration=10):
+    """
+    Scan for BMS device using aioble and connect to read data.
+    
+    Args:
+        device_name: Name of the BMS device to find
+        scan_duration: How long to scan in seconds
+        
+    Returns:
+        BMSData object or None if failed
+    """
+    global _bms_last_data
+    
+    # Import bluetooth for UUID
+    import bluetooth
+    
+    # BMS UART characteristic UUID
+    BMS_UART_UUID = bluetooth.UUID("0000ffe1-0000-1000-8000-00805f9b34fb")
+    BMS_SERVICE_UUID = bluetooth.UUID("0000ffe0-0000-1000-8000-00805f9b34fb")
+    REQUEST_FRAME = b"\xDD\xA5\x03\x00\xFF\xFD\x77"
+    
+    print("=" * 40)
+    print("Scanning for BMS device: %s" % device_name)
+    print("=" * 40)
+    
+    target_device = None
+    
+    # Scan for the device
+    try:
+        async with aioble.scan(
+            duration_ms=scan_duration * 1000,
+            interval_us=30000,
+            window_us=30000,
+            active=True
+        ) as scanner:
+            async for result in scanner:
+                name = result.name() or ""
+                if device_name in name:
+                    print("Found target device: %s (RSSI: %d)" % (name, result.rssi))
+                    target_device = result.device
+                    break  # Stop scanning once found
+                    
+    except Exception as e:
+        print("Scan error: %s" % e)
+        return None
+    
+    if not target_device:
+        print("Device not found!")
+        return None
+    
+    # Try to connect
+    print("Connecting to %s..." % device_name)
+    try:
+        connection = await target_device.connect(timeout_ms=10000)
+        print("Connected!")
+        
+        async with connection:
+            # Enumerate all services to find the UART characteristic
+            print("Discovering all services...")
+            uart_char = None
+            
+            try:
+                # Try specific service first
+                service = await connection.service(BMS_SERVICE_UUID)
+                if service:
+                    print("Found BMS service: %s" % service.uuid)
+                    uart_char = await service.characteristic(BMS_UART_UUID)
+                    if uart_char:
+                        print("Found UART characteristic: %s" % uart_char.uuid)
+            except Exception as e:
+                print("Specific service not found: %s" % e)
+            
+            # If not found, try all services
+            if not uart_char:
+                print("Searching all services for UART characteristic...")
+                try:
+                    # Wait a bit for service discovery to complete
+                    await asyncio.sleep(1)
+                    
+                    # Iterate through all available services asynchronously
+                    print("Enumerating services...")
+                    service_count = 0
+                    
+                    async for service in connection.services():
+                        service_count += 1
+                        print("  Service %d: %s" % (service_count, service.uuid))
+                        
+                        # Enumerate characteristics for this service
+                        async for char in service.characteristics():
+                            char_uuid_str = str(char.uuid).lower()
+                            print("    Char: %s" % char_uuid_str)
+                            
+                            # Look for the UART characteristic
+                            if "ffe1" in char_uuid_str:
+                                print("    *** FOUND UART CHARACTERISTIC! ***")
+                                uart_char = char
+                                break
+                        
+                        if uart_char:
+                            break
+                    
+                    print("Total services found: %d" % service_count)
+                            
+                except Exception as e:
+                    print("Error enumerating services: %s" % e)
+                    import sys
+                    sys.print_exception(e)
+            
+            if uart_char:
+                try:
+                    # Subscribe to notifications
+                    print("Subscribing to notifications...")
+                    await uart_char.subscribe(notify=True)
+                    
+                    # Send request
+                    print("Sending BMS request...")
+                    await uart_char.write(REQUEST_FRAME, response=False)
+                    
+                    # Wait for response
+                    print("Waiting for BMS response...")
+                    try:
+                        data = await asyncio.wait_for(
+                            uart_char.notified(),
+                            timeout=5.0
+                        )
+                        print("Received: %s" % data.hex())
+                        
+                        # Parse the response
+                        if len(data) > 4 and data[0] == 0xDD:
+                            bms_data = BMS_new.parse_jbd_basic_info(data[4:])
+                            if bms_data:
+                                _bms_last_data = bms_data
+                                print("Parsed BMS data: %s" % bms_data)
+                                return bms_data
+                        else:
+                            print("Invalid packet start byte: 0x%02x" % data[0])
+                    except asyncio.TimeoutError:
+                        print("Timeout waiting for BMS response")
+                except Exception as e:
+                    print("Error communicating with characteristic: %s" % e)
+                    import sys
+                    sys.print_exception(e)
+            else:
+                print("ERROR: UART characteristic not found in any service!")
+                
+    except asyncio.TimeoutError:
+        print("Connection timeout!")
+    except Exception as e:
+        print("Connection error: %s" % e)
+    
+    return None
+
+
+def disable_bluetooth():
+    """Disable Bluetooth radio to free resources for WiFi."""
+    try:
+        import bluetooth
+        ble = bluetooth.BLE()
+        ble.active(False)
+        print("Bluetooth disabled")
+    except Exception as e:
+        print("Error disabling Bluetooth: %s" % e)
+
+
+def run_ble_scan(duration=10, target_name=None):
+    """
+    Run BLE scan synchronously (wrapper for async function).
+    
+    Args:
+        duration: Scan duration in seconds
+        target_name: Optional device name to search for
+        
+    Returns:
+        List of discovered devices
+    """
+    print("\n*** Starting BLE Scan ***")
+    
+    # Run the async scan
+    devices, target = asyncio.run(scan_ble_devices(duration, target_name))
+    
+    # Disable Bluetooth after scan
+    disable_bluetooth()
+    time.sleep(0.5)  # Give time for BLE to fully stop
+    
+    print("*** BLE Scan Complete ***\n")
+    return devices, target
+
+
 def read_bms_once(device_name="0421150164", timeout=30):
     """
     Read BMS data once (blocking) and disable Bluetooth when done.
@@ -407,12 +680,10 @@ def read_bms_once(device_name="0421150164", timeout=30):
     print("Reading BMS data from device: %s" % device_name)
     print("=" * 40)
     
-    # Create BMS instance and read data once
-    bms = BMS_new(name=device_name)
-    data = bms.read_once(timeout=timeout)
+    # Run the async BMS scan and connect
+    data = asyncio.run(scan_and_connect_bms(device_name, scan_duration=15))
     
     if data:
-        _bms_last_data = data
         print("BMS data retrieved successfully:")
         print("  Voltage: %.2fV" % data.voltage)
         print("  Current: %.2fA" % data.current)
@@ -423,26 +694,35 @@ def read_bms_once(device_name="0421150164", timeout=30):
         print("Failed to read BMS data")
     
     # Disable Bluetooth to free resources for WiFi
-    print("Disabling Bluetooth...")
-    BMS_new.disable_bluetooth()
+    disable_bluetooth()
     time.sleep(0.5)  # Give time for BLE to fully stop
     
     print("=" * 40)
     return data
 
-
 def main():
     global count, wifi, gauge, gauge_hum, screen_status, _bms_last_data
     
-    # ===== PHASE 1: Read BMS data via Bluetooth =====
+    # ===== PHASE 1: BLE Scan and Connect to BMS =====
     # Must do this BEFORE starting WiFi (ESP32 limitation)
-    print("Phase 1: Reading BMS data...")
+    print("Phase 1: BLE Scan and BMS data retrieval...")
+    print("=" * 40)
+    
+    # Try to read BMS data using aioble
     bms_data = read_bms_once("0421150164", timeout=30)
     
     if bms_data:
-        print("BMS: %.2fV, %d%% SOC" % (bms_data.voltage, bms_data.capacity_percent))
+        print("\n*** BMS Data Retrieved Successfully ***")
+        print("  Voltage: %.2fV" % bms_data.voltage)
+        print("  Current: %.2fA" % bms_data.current)
+        print("  Power: %.2fW" % bms_data.power)
+        print("  SOC: %d%%" % bms_data.capacity_percent)
+        print("  Temperature: %.1f°C" % bms_data.temp1)
+        print("=" * 40)
     else:
-        print("BMS: No data (device not found or timeout)")
+        print("\n*** Failed to retrieve BMS data ***")
+        print("  Device may not be in range or not responding")
+        print("=" * 40)
     
     # ===== PHASE 2: Start WiFi and normal program =====
     print("\nPhase 2: Starting WiFi and main program...")
@@ -521,7 +801,7 @@ def main():
         except Exception as e:
             print("Main loop error:", e)
             time.sleep(1)
-
-
+            
+        
 if __name__ == "__main__":
     main()
