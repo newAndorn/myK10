@@ -12,8 +12,8 @@ import time
 # BMS Device Configuration
 BMS_DEVICE_NAME = "0421150164"
 BMS_SERVICE_UUID = bluetooth.UUID(0xff00)
-BMS_CHAR_RX_UUID = bluetooth.UUID(0xff01)  # Write
-BMS_CHAR_TX_UUID = bluetooth.UUID(0xff02)  # Notify
+BMS_CHAR_TX_UUID = bluetooth.UUID(0xff01)  # Write
+BMS_CHAR_RX_UUID = bluetooth.UUID(0xff02)  # Notify
 
 # JBD BMS Protocol Commands
 CMD_BASIC_INFO = b"\xDD\xA5\x03\x00\xFF\xFD\x77"  # Request basic system info
@@ -37,69 +37,76 @@ class BMSData:
         self.ntc_count = 0
         self.temps = []
         self.cell_voltages = []
+        self.calculated_voltage = 0.0
         
     def parse_basic_info(self, data):
         """Parse basic info response from BMS"""
-        if len(data) < 27:
-            print("Invalid basic info packet length")
+        # Packet format: DD 03 [length_high] [length_low] [data...]
+        # Your BMS sends 20 bytes total (16 bytes of actual data after 4-byte header)
+        if len(data) < 20:
+            print(f"Invalid basic info packet length: {len(data)} bytes (need 20+)")
             return False
             
         try:
-            # Voltage (0.01V units)
+            # Skip first 4 bytes (DD 03 + 2 length bytes), data starts at byte 4
+            # Voltage (0.01V units) - bytes 4-5
             self.voltage = struct.unpack('>H', data[4:6])[0] / 100.0
             
-            # Current (0.01A units, signed)
+            # Current (0.01A units, signed) - bytes 6-7
             current_raw = struct.unpack('>h', data[6:8])[0]
             self.current = current_raw / 100.0
             
-            # Balance capacity (0.01Ah units)
+            # Balance capacity (0.01Ah units) - bytes 8-9
             self.balance_capacity = struct.unpack('>H', data[8:10])[0] / 100.0
             
-            # Rate capacity (0.01Ah units)
+            # Rate capacity (0.01Ah units) - bytes 10-11
             self.rate_capacity = struct.unpack('>H', data[10:12])[0] / 100.0
             
-            # Cycle count
+            # Cycle count - bytes 12-13
             self.cycle_count = struct.unpack('>H', data[12:14])[0]
             
-            # Production date
+            # Production date - bytes 14-15
             prod_date = struct.unpack('>H', data[14:16])[0]
             day = prod_date & 0x1F
             month = (prod_date >> 5) & 0x0F
             year = 2000 + (prod_date >> 9)
             self.production_date = f"{year}-{month:02d}-{day:02d}"
             
-            # Balance status
+            # Balance status (4 bytes) - bytes 16-19
             self.balance_status = struct.unpack('>I', data[16:20])[0]
             
-            # Protection status
-            self.protection_status = struct.unpack('>H', data[20:22])[0]
-            
-            # Software version
-            self.software_version = data[22]
-            
-            # State of Charge (SOC)
-            self.soc = data[23]
-            
-            # FET status
-            self.fet_status = data[24]
-            
-            # Number of cells
-            self.cell_count = data[25]
-            
-            # Number of temperature sensors
-            self.ntc_count = data[26]
-            
-            # Temperatures (0.1K - 2731 = Celsius)
+            # For 20-byte packets, remaining fields may not be present
+            # Set defaults for missing data
+            self.protection_status = 0
+            self.software_version = 0
+            self.soc = 0  # Not in this packet
+            self.fet_status = 0
+            self.cell_count = 0
+            self.ntc_count = 0
             self.temps = []
-            for i in range(min(self.ntc_count, 3)):
-                if 27 + i*2 + 1 < len(data):
-                    temp_raw = struct.unpack('>H', data[27+i*2:29+i*2])[0]
-                    temp_c = (temp_raw - 2731) / 10.0
-                    self.temps.append(temp_c)
             
+            # If packet is longer, try to parse additional fields
+            if len(data) >= 27:
+                self.protection_status = struct.unpack('>H', data[20:22])[0]
+                self.software_version = data[22]
+                self.soc = data[23]
+                self.fet_status = data[24]
+                self.cell_count = data[25]
+                self.ntc_count = data[26]
+                
+                # Temperatures (0.1K - 2731 = Celsius)
+                for i in range(min(self.ntc_count, 3)):
+                    if 27 + i*2 + 1 < len(data):
+                        temp_raw = struct.unpack('>H', data[27+i*2:29+i*2])[0]
+                        temp_c = (temp_raw - 2731) / 10.0
+                        self.temps.append(temp_c)
+            
+            print(f"Parsed: V={self.voltage}V, I={self.current}A, Cap={self.balance_capacity}Ah, Cycles={self.cycle_count}")
             return True
         except Exception as e:
             print(f"Error parsing basic info: {e}")
+            import sys
+            sys.print_exception(e)
             return False
     
     def parse_cell_voltages(self, data):
@@ -111,11 +118,14 @@ class BMSData:
         try:
             # Cell voltages start at byte 4, 2 bytes each, in mV
             self.cell_voltages = []
-            num_cells = (len(data) - 4) // 2
+            num_cells = ((len(data) - 4) // 2) -1
             
             for i in range(num_cells):
                 cell_mv = struct.unpack('>H', data[4+i*2:6+i*2])[0]
                 self.cell_voltages.append(cell_mv / 1000.0)
+            
+            # Calculate total voltage by summing all cell voltages
+            self.calculated_voltage = sum(self.cell_voltages)
             
             return True
         except Exception as e:
@@ -128,6 +138,7 @@ class BMSData:
         print("BMS Battery Data")
         print("=" * 50)
         print(f"Voltage:          {self.voltage:.2f} V")
+        print(f"Calculated Voltage: {self.calculated_voltage:.2f} V")
         print(f"Current:          {self.current:.2f} A")
         print(f"Power:            {self.voltage * self.current:.2f} W")
         print(f"SOC:              {self.soc} %")
@@ -251,34 +262,87 @@ async def read_bms_data():
             print("Subscribing to notifications...")
             await tx_char.subscribe(notify=True)
             
-            # Request basic info
-            print("\nRequesting basic info...")
-            await rx_char.write(CMD_BASIC_INFO, response=False)
+            # Wait for BMS to be ready for commands (important!)
+            print("Waiting for BMS to be ready...")
+            await asyncio.sleep(2)
             
-            # Wait for response
-            try:
-                data = await asyncio.wait_for(tx_char.notified(), timeout=5.0)
-                print(f"Received {len(data)} bytes")
-                if data[0] == 0xDD and data[1] == 0x03:
-                    bms_data.parse_basic_info(data)
-            except asyncio.TimeoutError:
-                print("Timeout waiting for basic info")
-            
-            # Small delay
-            await asyncio.sleep(0.5)
-            
-            # Request cell voltages
+            # Request cell voltages FIRST (helps wake up the BMS)
             print("\nRequesting cell voltages...")
-            await rx_char.write(CMD_CELL_VOLTAGES, response=False)
+            success = False
+            for attempt in range(3):
+                await rx_char.write(CMD_CELL_VOLTAGES, response=False)
+                try:
+                    data = await asyncio.wait_for(tx_char.notified(), timeout=10.0)
+                    print(f"Received {len(data)} bytes")
+                    if data[0] == 0xDD and data[1] == 0x04:
+                        bms_data.parse_cell_voltages(data)
+                        success = True
+                        break
+                except asyncio.TimeoutError:
+                    if attempt < 2:
+                        print(f"Timeout, retry {attempt + 2}/3...")
+                        await asyncio.sleep(1)
+                    else:
+                        print("Timeout waiting for cell voltages")
             
-            # Wait for response
-            try:
-                data = await asyncio.wait_for(tx_char.notified(), timeout=5.0)
-                print(f"Received {len(data)} bytes")
-                if data[0] == 0xDD and data[1] == 0x04:
-                    bms_data.parse_cell_voltages(data)
-            except asyncio.TimeoutError:
-                print("Timeout waiting for cell voltages")
+            # Delay between commands
+            await asyncio.sleep(1)
+            
+            # Request basic info with retry logic
+            print("\nRequesting basic info...")
+            for attempt in range(3):
+                await rx_char.write(CMD_BASIC_INFO, response=False)
+                
+                # Try to collect multiple notifications if needed
+                collected_data = bytearray()
+                notification_count = 0
+                
+                try:
+                    # Get first notification
+                    data = await asyncio.wait_for(tx_char.notified(), timeout=10.0)
+                    print(f"Received {len(data)} bytes")
+                    print(f"Raw hex: {data.hex()}")
+                    
+                    # Print first 10 bytes safely
+                    first_bytes = []
+                    for byte in data[:min(10, len(data))]:
+                        first_bytes.append(f'0x{byte:02x}')
+                    print(f"First 10 bytes: {first_bytes}")
+                    
+                    # Check for expected DD 03 header
+                    if data[0] == 0xDD and data[1] == 0x03:
+                        print("Header matches DD 03, attempting to parse...")
+                        bms_data.parse_basic_info(data)
+                        break
+                    # Check if data starts with 0x00 0x00 (might be padding or fragment)
+                    elif data[0] == 0x00 and data[1] == 0x00:
+                        print("Found 0x00 0x00 header - might be notification queue issue")
+                        # Try to find DD 03 in the data
+                        for i in range(len(data) - 1):
+                            if data[i] == 0xDD and data[i+1] == 0x03:
+                                print(f"Found DD 03 at offset {i}")
+                                bms_data.parse_basic_info(data[i:])
+                                break
+                        else:
+                            # Try waiting for another notification
+                            print("Trying to get next notification...")
+                            try:
+                                data2 = await asyncio.wait_for(tx_char.notified(), timeout=2.0)
+                                print(f"Got second notification: {len(data2)} bytes - {data2.hex()}")
+                                if data2[0] == 0xDD and data2[1] == 0x03:
+                                    bms_data.parse_basic_info(data2)
+                                    break
+                            except asyncio.TimeoutError:
+                                print("No second notification")
+                    else:
+                        print(f"Unexpected header: 0x{data[0]:02x} 0x{data[1]:02x}")
+                        
+                except asyncio.TimeoutError:
+                    if attempt < 2:
+                        print(f"Timeout, retry {attempt + 2}/3...")
+                        await asyncio.sleep(1)
+                    else:
+                        print("Timeout waiting for basic info after all retries")
             
             # Display results
             print("\n")
@@ -344,5 +408,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

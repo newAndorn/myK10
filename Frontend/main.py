@@ -14,14 +14,11 @@ from unihiker_k10 import mic, speaker
 from unihiker_k10 import camera
 from unihiker_k10 import acce
 from k10_base import WiFi
-from k10_base._k10_base import BMS
-from BMS import BMS_new, BMSData
 
 import _thread
 import lvgl as lv
 
 import asyncio
-import aioble
 
 WIFI_SSID = "andorn12"
 WIFI_PASSWORD = "GardenRoute11"
@@ -68,144 +65,20 @@ def button_a_released():
     print("button_a_released")
 
 def button_b_pressed():
-    
-    devices = BMS.scan_devices(duration=5)
-    
-    
-#    global screen_status
-    
-#    print("button_b_pressed")
-#     try:
-#         print("begin sys play")
-#         speaker.play_sys_music("sound.wav")
-#     except Exception as e:
-#         print("speaker error:", e)
-#     print("end sys play")
-    
-#    if screen_status == "off":
-#        screen_status = "on"
-#    else:
-#        screen_status = "off"
-#        print("clear screen.")
-#        screen.clear()
+    print("button_b_pressed")
 
 def button_b_released():
     print("button_b_released")
 
-
-# Global BMS watcher instance
-_bms_watcher = None
-_bms_last_data = None
-
-
-def on_bms_data_received(bms_data):
-    """
-    Callback function called when BMS data is received from advertisement.
-    
-    Args:
-        bms_data: BMSData object containing parsed battery information
-    """
-    global _bms_last_data
-    _bms_last_data = bms_data
-    
-    print(f"BMS Data Received:")
-    print(f"  Voltage: {bms_data.voltage:.2f}V")
-    print(f"  Current: {bms_data.current:.2f}A")
-    print(f"  Power: {bms_data.power:.2f}W")
-    print(f"  SOC: {bms_data.capacity_percent}%")
-    print(f"  Temp1: {bms_data.temp1:.1f}°C")
-    print(f"  RSSI: {bms_data.rssi}dBm")
-    
-    if bms_data.raw_data:
-        print(f"  Raw: {bms_data.raw_data.hex()}")
-    
-    # Optionally publish BMS data via MQTT
-    if _client is not None:
-        try:
-            bms_mqtt_data = {
-                "bms": {
-                    "voltage": bms_data.voltage,
-                    "current": bms_data.current,
-                    "power": bms_data.power,
-                    "soc": bms_data.capacity_percent,
-                    "temp1": bms_data.temp1,
-                    "temp2": bms_data.temp2,
-                    "rssi": bms_data.rssi
-                }
-            }
-            _client.publish(b"unihiker/bms", json.dumps(bms_mqtt_data))
-        except Exception as e:
-            print(f"Error publishing BMS data: {e}")
-
-
-def watch_bluetooth_data(device_name="0421150164", poll_interval=5, use_advertisements=True):
-    """
-    Watch bluetooth data from a BLE device using BMS_new class.
-    
-    Args:
-        device_name: The name of the BLE device to connect to (default: "0421150164")
-        poll_interval: Seconds between data requests (default: 5)
-        use_advertisements: If True, watch advertisement data (passive scan).
-                           If False, connect via GATT for detailed data.
-    
-    Returns:
-        BMS_new instance that is watching the device
-    """
-    global _bms_watcher
-    
-    print(f"Starting bluetooth watch for device: {device_name}")
-    print(f"  Mode: {'Advertisement scanning' if use_advertisements else 'GATT connection'}")
-    
-    # Create BMS_new instance with the device name and callback
-    _bms_watcher = BMS_new(
-        name=device_name,
-        poll_interval=poll_interval,
-        on_data_callback=on_bms_data_received
-    )
-    
-    # Start watching bluetooth data
-    if use_advertisements:
-        # Watch advertisement data (passive, no connection needed)
-        _bms_watcher.start_advertisement_watch()
-    else:
-        # Connect via GATT for detailed BMS data
-        _bms_watcher.start()
-    
-    print(f"Bluetooth watcher started for device: {device_name}")
-    return _bms_watcher
-
-
-def stop_bluetooth_watch():
-    """
-    Stop the bluetooth BMS watcher.
-    """
-    global _bms_watcher
-    if _bms_watcher:
-        _bms_watcher.stop()
-        print("Bluetooth watcher stopped")
-    else:
-        print("No bluetooth watcher running")
-
-
-def get_bms_data():
-    """
-    Get the last received BMS data.
-    
-    Returns:
-        BMSData object or None if no data received yet
-    """
-    global _bms_last_data, _bms_watcher
-    if _bms_watcher:
-        return _bms_watcher.last_data
-    return _bms_last_data
-
+bt_a.event_pressed = button_a_pressed
+bt_a.event_released = button_a_released
+bt_b.event_pressed = button_b_pressed
+bt_b.event_released = button_b_released
 
 def publish_values():
     global hum, temp, count, _client
     
     try:
-        success = True
-            
         # Create JSON object with all sensor readings
         sensor_data = {
             "environment": {
@@ -235,9 +108,9 @@ def take_and_send_photo():
     try:
         
         # White balance may not work on first capture
-        buffer = camera.capture()
+        camera.capture()
         time.sleep(0.1)
-        buffer = camera.capture()
+        camera.capture()
         time.sleep(0.1)
         buffer = camera.capture()
             
@@ -257,12 +130,6 @@ def take_and_send_photo():
     except Exception as e:
         print("Camera error:", e)
 
-
-bt_a.event_pressed = button_a_pressed
-bt_a.event_released = button_a_released
-bt_b.event_pressed = button_b_pressed
-bt_b.event_released = button_b_released
-
 def wifi_connect_non_blocking(ssid, password, timeout_s=20):
     
     print("Connecting to:", ssid)
@@ -272,7 +139,6 @@ def wifi_connect_non_blocking(ssid, password, timeout_s=20):
     wifi.info()
     
     return wifi.info()
-
 
 def on_mqtt_message(topic, msg):
     rgb.write(num=1, R=0, G=0, B=255)
@@ -390,342 +256,9 @@ def maybe_connect_mqtt():
     if _client is None:
         print("MQTT still offline.")
 
-async def scan_ble_devices(duration_seconds=10, target_name=None):
-    """
-    Scan for BLE devices using aioble library.
-    
-    Args:
-        duration_seconds: How long to scan in seconds (default: 10)
-        target_name: Optional device name to look for (e.g., "0421150164")
-        
-    Returns:
-        List of discovered devices as tuples (name, address, rssi, services)
-    """
-    print("=" * 40)
-    print("Starting BLE scan using aioble...")
-    print("  Duration: %d seconds" % duration_seconds)
-    if target_name:
-        print("  Looking for: %s" % target_name)
-    print("=" * 40)
-    
-    devices = []
-    target_device = None
-    
-    try:
-        # Scan for the specified duration
-        async with aioble.scan(
-            duration_ms=duration_seconds * 1000,
-            interval_us=30000,
-            window_us=30000,
-            active=True
-        ) as scanner:
-            async for result in scanner:
-                # Get device name
-                name = result.name() or ""
-                addr = result.device.addr_hex()
-                rssi = result.rssi
-                
-                # Get advertised services
-                services = []
-                for uuid in result.services():
-                    services.append(str(uuid))
-                
-                # Get manufacturer data if available
-                try:
-                    mfr_data = result.manufacturer()
-                except Exception as e:
-                    print("  Error getting manufacturer data: %s" % e)
-                    mfr_data = None
-
-                # Print device info
-                print("\nDevice found:")
-                print("  Name: %s" % (name if name else "<no name>"))
-                print("  Address: %s" % addr)
-                print("  RSSI: %d dBm" % rssi)
-                if services:
-                    print("  Services: %s" % services)
-                if mfr_data:
-                    try:
-                        # Handle different manufacturer data formats
-                        if isinstance(mfr_data, tuple) and len(mfr_data) >= 2:
-                            mfr_id, mfr_bytes = mfr_data
-                            print("  Manufacturer: ID=%04x Data=%s" % (mfr_id, mfr_bytes.hex()))
-                        else:
-                            # mfr_data might be bytes directly
-                            print("  Manufacturer: %s" % (mfr_data.hex() if isinstance(mfr_data, bytes) else str(mfr_data)))
-                    except Exception as e:
-                        print("  Error unpacking manufacturer data: %s" % e)
-                
-                # Check if this is our target device
-                if target_name and target_name in name:
-                    print("  *** TARGET DEVICE FOUND! ***")
-                    target_device = (name, addr, rssi, result.device, mfr_data)
-                
-                # Add to list if not already present
-                if not any(d[1] == addr for d in devices):
-                    devices.append((name, addr, rssi, services))
-                    
-    except Exception as e:
-        print("Scan error: %s" % e)
-    
-    print("\n" + "=" * 40)
-    print("Scan complete. Found %d device(s)" % len(devices))
-    print("=" * 40)
-    
-    return devices, target_device
-
-
-async def scan_and_connect_bms(device_name="0421150164", scan_duration=10):
-    """
-    Scan for BMS device using aioble and connect to read data.
-    
-    Args:
-        device_name: Name of the BMS device to find
-        scan_duration: How long to scan in seconds
-        
-    Returns:
-        BMSData object or None if failed
-    """
-    global _bms_last_data
-    
-    # Import bluetooth for UUID
-    import bluetooth
-    
-    # BMS UART characteristic UUID
-    BMS_UART_UUID = bluetooth.UUID("0000ffe1-0000-1000-8000-00805f9b34fb")
-    BMS_SERVICE_UUID = bluetooth.UUID("0000ffe0-0000-1000-8000-00805f9b34fb")
-    REQUEST_FRAME = b"\xDD\xA5\x03\x00\xFF\xFD\x77"
-    
-    print("=" * 40)
-    print("Scanning for BMS device: %s" % device_name)
-    print("=" * 40)
-    
-    target_device = None
-    
-    # Scan for the device
-    try:
-        async with aioble.scan(
-            duration_ms=scan_duration * 1000,
-            interval_us=30000,
-            window_us=30000,
-            active=True
-        ) as scanner:
-            async for result in scanner:
-                name = result.name() or ""
-                if device_name in name:
-                    print("Found target device: %s (RSSI: %d)" % (name, result.rssi))
-                    target_device = result.device
-                    break  # Stop scanning once found
-                    
-    except Exception as e:
-        print("Scan error: %s" % e)
-        return None
-    
-    if not target_device:
-        print("Device not found!")
-        return None
-    
-    # Try to connect
-    print("Connecting to %s..." % device_name)
-    try:
-        connection = await target_device.connect(timeout_ms=10000)
-        print("Connected!")
-        
-        async with connection:
-            # Enumerate all services to find the UART characteristic
-            print("Discovering all services...")
-            uart_char = None
-            
-            try:
-                # Try specific service first
-                service = await connection.service(BMS_SERVICE_UUID)
-                if service:
-                    print("Found BMS service: %s" % service.uuid)
-                    uart_char = await service.characteristic(BMS_UART_UUID)
-                    if uart_char:
-                        print("Found UART characteristic: %s" % uart_char.uuid)
-            except Exception as e:
-                print("Specific service not found: %s" % e)
-            
-            # If not found, try all services
-            if not uart_char:
-                print("Searching all services for UART characteristic...")
-                try:
-                    # Wait a bit for service discovery to complete
-                    await asyncio.sleep(1)
-                    
-                    # Iterate through all available services asynchronously
-                    print("Enumerating services...")
-                    service_count = 0
-                    
-                    async for service in connection.services():
-                        service_count += 1
-                        print("  Service %d: %s" % (service_count, service.uuid))
-                        
-                        # Enumerate characteristics for this service
-                        async for char in service.characteristics():
-                            char_uuid_str = str(char.uuid).lower()
-                            print("    Char: %s" % char_uuid_str)
-                            
-                            # Look for the UART characteristic
-                            if "ffe1" in char_uuid_str:
-                                print("    *** FOUND UART CHARACTERISTIC! ***")
-                                uart_char = char
-                                break
-                        
-                        if uart_char:
-                            break
-                    
-                    print("Total services found: %d" % service_count)
-                            
-                except Exception as e:
-                    print("Error enumerating services: %s" % e)
-                    import sys
-                    sys.print_exception(e)
-            
-            if uart_char:
-                try:
-                    # Subscribe to notifications
-                    print("Subscribing to notifications...")
-                    await uart_char.subscribe(notify=True)
-                    
-                    # Send request
-                    print("Sending BMS request...")
-                    await uart_char.write(REQUEST_FRAME, response=False)
-                    
-                    # Wait for response
-                    print("Waiting for BMS response...")
-                    try:
-                        data = await asyncio.wait_for(
-                            uart_char.notified(),
-                            timeout=5.0
-                        )
-                        print("Received: %s" % data.hex())
-                        
-                        # Parse the response
-                        if len(data) > 4 and data[0] == 0xDD:
-                            bms_data = BMS_new.parse_jbd_basic_info(data[4:])
-                            if bms_data:
-                                _bms_last_data = bms_data
-                                print("Parsed BMS data: %s" % bms_data)
-                                return bms_data
-                        else:
-                            print("Invalid packet start byte: 0x%02x" % data[0])
-                    except asyncio.TimeoutError:
-                        print("Timeout waiting for BMS response")
-                except Exception as e:
-                    print("Error communicating with characteristic: %s" % e)
-                    import sys
-                    sys.print_exception(e)
-            else:
-                print("ERROR: UART characteristic not found in any service!")
-                
-    except asyncio.TimeoutError:
-        print("Connection timeout!")
-    except Exception as e:
-        print("Connection error: %s" % e)
-    
-    return None
-
-
-def disable_bluetooth():
-    """Disable Bluetooth radio to free resources for WiFi."""
-    try:
-        import bluetooth
-        ble = bluetooth.BLE()
-        ble.active(False)
-        print("Bluetooth disabled")
-    except Exception as e:
-        print("Error disabling Bluetooth: %s" % e)
-
-
-def run_ble_scan(duration=10, target_name=None):
-    """
-    Run BLE scan synchronously (wrapper for async function).
-    
-    Args:
-        duration: Scan duration in seconds
-        target_name: Optional device name to search for
-        
-    Returns:
-        List of discovered devices
-    """
-    print("\n*** Starting BLE Scan ***")
-    
-    # Run the async scan
-    devices, target = asyncio.run(scan_ble_devices(duration, target_name))
-    
-    # Disable Bluetooth after scan
-    disable_bluetooth()
-    time.sleep(0.5)  # Give time for BLE to fully stop
-    
-    print("*** BLE Scan Complete ***\n")
-    return devices, target
-
-
-def read_bms_once(device_name="0421150164", timeout=30):
-    """
-    Read BMS data once (blocking) and disable Bluetooth when done.
-    
-    Args:
-        device_name: Name of the BMS device
-        timeout: Maximum time to wait for data
-        
-    Returns:
-        BMSData object or None if failed
-    """
-    global _bms_last_data
-    
-    print("=" * 40)
-    print("Reading BMS data from device: %s" % device_name)
-    print("=" * 40)
-    
-    # Run the async BMS scan and connect
-    data = asyncio.run(scan_and_connect_bms(device_name, scan_duration=15))
-    
-    if data:
-        print("BMS data retrieved successfully:")
-        print("  Voltage: %.2fV" % data.voltage)
-        print("  Current: %.2fA" % data.current)
-        print("  Power: %.2fW" % data.power)
-        print("  SOC: %d%%" % data.capacity_percent)
-        print("  Temp: %.1f°C" % data.temp1)
-    else:
-        print("Failed to read BMS data")
-    
-    # Disable Bluetooth to free resources for WiFi
-    disable_bluetooth()
-    time.sleep(0.5)  # Give time for BLE to fully stop
-    
-    print("=" * 40)
-    return data
-
 def main():
-    global count, wifi, gauge, gauge_hum, screen_status, _bms_last_data
+    global count, wifi, gauge, gauge_hum, screen_status
     
-    # ===== PHASE 1: BLE Scan and Connect to BMS =====
-    # Must do this BEFORE starting WiFi (ESP32 limitation)
-    print("Phase 1: BLE Scan and BMS data retrieval...")
-    print("=" * 40)
-    
-    # Try to read BMS data using aioble
-    bms_data = read_bms_once("0421150164", timeout=30)
-    
-    if bms_data:
-        print("\n*** BMS Data Retrieved Successfully ***")
-        print("  Voltage: %.2fV" % bms_data.voltage)
-        print("  Current: %.2fA" % bms_data.current)
-        print("  Power: %.2fW" % bms_data.power)
-        print("  SOC: %d%%" % bms_data.capacity_percent)
-        print("  Temperature: %.1f°C" % bms_data.temp1)
-        print("=" * 40)
-    else:
-        print("\n*** Failed to retrieve BMS data ***")
-        print("  Device may not be in range or not responding")
-        print("=" * 40)
-    
-    # ===== PHASE 2: Start WiFi and normal program =====
-    print("\nPhase 2: Starting WiFi and main program...")
     wifi = WiFi()
     
     # Initialize screen regardless of connectivity
