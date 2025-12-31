@@ -292,11 +292,7 @@ async def read_bms_data():
             print("\nRequesting basic info...")
             for attempt in range(3):
                 await rx_char.write(CMD_BASIC_INFO, response=False)
-                
-                # Try to collect multiple notifications if needed
-                collected_data = bytearray()
-                notification_count = 0
-                
+
                 try:
                     # Get first notification
                     data = await asyncio.wait_for(tx_char.notified(), timeout=10.0)
@@ -324,16 +320,25 @@ async def read_bms_data():
                                 bms_data.parse_basic_info(data[i:])
                                 break
                         else:
-                            # Try waiting for another notification
+                            # Try waiting for another notification - retry for up to 15 seconds
                             print("Trying to get next notification...")
-                            try:
-                                data2 = await asyncio.wait_for(tx_char.notified(), timeout=2.0)
-                                print(f"Got second notification: {len(data2)} bytes - {data2.hex()}")
-                                if data2[0] == 0xDD and data2[1] == 0x03:
-                                    bms_data.parse_basic_info(data2)
-                                    break
-                            except asyncio.TimeoutError:
-                                print("No second notification")
+                            notification_found = False
+                            for retry in range(15):
+                                try:
+                                    data2 = await asyncio.wait_for(tx_char.notified(), timeout=1.0)
+                                    print(f"Got second notification: {len(data2)} bytes - {data2.hex()}")
+                                    if data2[0] == 0xDD and data2[1] == 0x03:
+                                        bms_data.parse_basic_info(data2)
+                                        notification_found = True
+                                        break
+                                except asyncio.TimeoutError:
+                                    if retry < 14:
+                                        print(f"No notification yet, waiting... ({retry + 1}/15)")
+                                    else:
+                                        print("No second notification after 15 seconds")
+                            
+                            if notification_found:
+                                break
                     else:
                         print(f"Unexpected header: 0x{data[0]:02x} 0x{data[1]:02x}")
                         
