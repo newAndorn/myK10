@@ -38,6 +38,7 @@ class BMSData:
         self.temps = []
         self.cell_voltages = []
         self.calculated_voltage = 0.0
+        self.calculated_soc_voltage = 0.0
         
     def parse_basic_info(self, data):
         """Parse basic info response from BMS"""
@@ -109,6 +110,45 @@ class BMSData:
             sys.print_exception(e)
             return False
     
+    def calculate_soc_from_voltage(self, cell_voltage):
+        """
+        Calculate SOC based on cell voltage for LiFePO4 (Liontron)
+        Uses piecewise linear interpolation
+        """
+        # LiFePO4 voltage to SOC curve (per cell)
+        # Format: (voltage, soc_percent)
+        voltage_soc_curve = [
+            (2.50, 0),    # Empty (safety cutoff)
+            (3.00, 5),    # Very low
+            (3.10, 10),   
+            (3.20, 20),
+            (3.25, 40),   # Start of flat region
+            (3.30, 60),   
+            (3.35, 80),
+            (3.40, 90),
+            (3.50, 95),
+            (3.65, 100),  # Full charge
+        ]
+        
+        # Clamp voltage to valid range
+        if cell_voltage <= voltage_soc_curve[0][0]:
+            return 0.0
+        if cell_voltage >= voltage_soc_curve[-1][0]:
+            return 100.0
+        
+        # Find the two points to interpolate between
+        for i in range(len(voltage_soc_curve) - 1):
+            v1, soc1 = voltage_soc_curve[i]
+            v2, soc2 = voltage_soc_curve[i + 1]
+            
+            if v1 <= cell_voltage <= v2:
+                # Linear interpolation
+                ratio = (cell_voltage - v1) / (v2 - v1)
+                soc = soc1 + ratio * (soc2 - soc1)
+                return soc
+        
+        return 0.0
+    
     def parse_cell_voltages(self, data):
         """Parse cell voltage response from BMS"""
         if len(data) < 4:
@@ -126,6 +166,11 @@ class BMSData:
             
             # Calculate total voltage by summing all cell voltages
             self.calculated_voltage = sum(self.cell_voltages)
+            
+            # Calculate SOC from average cell voltage
+            if len(self.cell_voltages) > 0:
+                avg_cell_voltage = self.calculated_voltage / len(self.cell_voltages)
+                self.calculated_soc_voltage = self.calculate_soc_from_voltage(avg_cell_voltage)
             
             return True
         except Exception as e:
