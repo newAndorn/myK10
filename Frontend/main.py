@@ -4,6 +4,7 @@ import ubinascii
 from machine import unique_id
 from umqtt.simple import MQTTClient
 import ujson as json
+import gc
 
 from unihiker_k10 import screen
 from unihiker_k10 import temp_humi
@@ -13,10 +14,6 @@ from unihiker_k10 import button
 from unihiker_k10 import mic, speaker
 from unihiker_k10 import camera
 from unihiker_k10 import acce
-from k10_base import WiFi
-
-import _thread
-import lvgl as lv
 
 import asyncio
 import aioble
@@ -57,6 +54,7 @@ _last_mqtt_check_ms = 0
 _last_bms_scan_ms = 0
 _wifi_check_interval_ms = 5000
 _mqtt_check_interval_ms = 5000
+_bms_data_published = True  # Flag to track if current BMS data has been published
 
 # Values
 hum = None
@@ -66,7 +64,7 @@ count = 0
 bms_data = None
 
 # GUI Element
-gauge = None
+gauge_temp = None
 gauge_hum = None
 gauge_bms_voltage = None
 gauge_bms_soc = None
@@ -122,10 +120,10 @@ def publish_values():
         success = False
 
 def publish_bms_data():
-    global bms_data, _client
+    global bms_data, _client, _bms_data_published
     
     if bms_data is None or _client is None:
-        return
+        return False
     
     try:
         # Create JSON object with BMS data
@@ -154,16 +152,18 @@ def publish_bms_data():
         json_str = json.dumps(bms_json)
         _client.publish(MQTT_TOPIC_PUB_BMS, json_str)
         print("BMS data published to MQTT")
+        _bms_data_published = True  # Mark as published
+        return True
         
     except Exception as e:
         print(f"Error publishing BMS data: {e}")
+        return False
     
 def take_and_send_photo():    
     print("Taking photo...")
     image_header = b"data:image/jpeg;base64,"
     
     try:
-        
         # White balance may not work on first capture
         camera.capture()
         time.sleep(0.1)
@@ -171,7 +171,7 @@ def take_and_send_photo():
         time.sleep(0.1)
         buffer = camera.capture()
             
-        jpeg_buf = camera.encode_jpeg(buffer, quality=70)
+        jpeg_buf = camera.encode_jpeg(buffer, quality=50)
                 
         base64_picture = ubinascii.b2a_base64(jpeg_buf)
 
@@ -187,15 +187,24 @@ def take_and_send_photo():
     except Exception as e:
         print("Camera error:", e)
 
-def wifi_connect_non_blocking(ssid, password, timeout_s=20):
-    
+def wifi_connect_non_blocking(wlan, ssid, password, timeout_s=20):
+    """Connect to WiFi using standard MicroPython network module"""
     print("Connecting to:", ssid)
     
-    wifi.connect(ssid=ssid,psd=password,timeout=50000)
-    wifi.status()
-    wifi.info()
+    if not wlan.active():
+        wlan.active(True)
     
-    return wifi.info()
+    wlan.connect(ssid, password)
+    
+    # Wait for connection with timeout
+    start_time = time.time()
+    while not wlan.isconnected() and (time.time() - start_time) < timeout_s:
+        time.sleep(0.5)
+    
+    if wlan.isconnected():
+        return wlan.ifconfig()
+    else:
+        return None
 
 def on_mqtt_message(topic, msg):
     rgb.write(num=1, R=0, G=0, B=255)
@@ -261,7 +270,7 @@ def toggle_light():
         print(f"Error publishing: {e}")
 
 def print_sensor_values(): 
-    global hum, temp, count, gauge, gauge_hum, gauge_bms_voltage, gauge_bms_soc, bms_data
+    global hum, temp, count, gauge_temp, gauge_hum, gauge_bms_voltage, gauge_bms_soc, bms_data
     
     try:
         temp = temp_humi.read_temp() - temp_adjustment
@@ -272,7 +281,7 @@ def print_sensor_values():
     except Exception:
         hum = None
         
-    screen.set_gauge_value(gauge, int(temp), text=f"{temp:.2f} C")
+    screen.set_gauge_value(gauge_temp, int(temp), text=f"{temp:.2f} C")
     screen.set_gauge_value(gauge_hum, int(hum ), text=f"{hum:.2f} %", gauge_type="humidity")
 
     # Update BMS gauges if data is available
@@ -286,25 +295,25 @@ def print_sensor_values():
     screen.show_draw()
 
 def maybe_reconnect_wifi():
-    global _last_wifi_check_ms
+    global _last_wifi_check_ms, wlan
     now = time.ticks_ms()
     if time.ticks_diff(now, _last_wifi_check_ms) < _wifi_check_interval_ms:
         return
 
     _last_wifi_check_ms = now
 
-    if wifi.status():
+    if wlan.isconnected():
         return
 
     print("WiFi not connected. Attempting reconnect...")
-    ipcfg = wifi_connect_non_blocking(WIFI_SSID, WIFI_PASSWORD, timeout_s=5)
+    ipcfg = wifi_connect_non_blocking(wlan, WIFI_SSID, WIFI_PASSWORD, timeout_s=5)
     if ipcfg:
         print("WiFi connected. IF config:", ipcfg)
     else:
         print("Still offline (WiFi).")
 
 def maybe_connect_mqtt():
-    global _client, _last_mqtt_check_ms
+    global _client, _last_mqtt_check_ms, wlan
     if _client is not None:
         return
 
@@ -313,7 +322,7 @@ def maybe_connect_mqtt():
         return
     _last_mqtt_check_ms = now
 
-    if not wifi.status():
+    if not wlan.isconnected():
         print("Skipping MQTT connect; WiFi offline.")
         return
 
@@ -354,12 +363,12 @@ async def connect_to_bms(device):
 
 async def read_bms_data_async():
     """Read BMS data via Bluetooth"""
-    global bms_data
+    global bms_data, _bms_data_published
     
     new_bms_data = BMSData()
     
     # Find BMS device
-    device = await find_bms_device(BMS_DEVICE_NAME, timeout_ms=15000)
+    device = await find_bms_device(BMS_DEVICE_NAME, timeout_ms=50000)
     if not device:
         print("BMS device not found!")
         return False
@@ -404,7 +413,7 @@ async def read_bms_data_async():
             for attempt in range(3):
                 await rx_char.write(CMD_CELL_VOLTAGES, response=False)
                 try:
-                    data = await asyncio.wait_for(tx_char.notified(), timeout=10.0)
+                    data = await asyncio.wait_for(tx_char.notified(), timeout=5.0)
                     print(f"Received {len(data)} bytes")
                     if data[0] == 0xDD and data[1] == 0x04:
                         new_bms_data.parse_cell_voltages(data)
@@ -426,39 +435,17 @@ async def read_bms_data_async():
 
                 try:
                     # Get first notification
-                    data = await asyncio.wait_for(tx_char.notified(), timeout=10.0)
+                    data = await asyncio.wait_for(tx_char.notified(), timeout=5.0)
                     print(f"Received {len(data)} bytes")
-                    
+
                     # Check for expected DD 03 header
                     if data[0] == 0xDD and data[1] == 0x03:
                         print("Header matches DD 03, attempting to parse...")
                         new_bms_data.parse_basic_info(data)
                         break
-                    # Check if data starts with 0x00 0x00 (might be padding or fragment)
-                    elif data[0] == 0x00 and data[1] == 0x00:
-                        print("Found 0x00 0x00 header - trying to find DD 03...")
-                        # Try to find DD 03 in the data
-                        for i in range(len(data) - 1):
-                            if data[i] == 0xDD and data[i+1] == 0x03:
-                                print(f"Found DD 03 at offset {i}")
-                                new_bms_data.parse_basic_info(data[i:])
-                                break
-                        else:
-                            # Try waiting for another notification
-                            print("Trying to get next notification...")
-                            for retry in range(15):
-                                try:
-                                    data2 = await asyncio.wait_for(tx_char.notified(), timeout=1.0)
-                                    print(f"Got second notification: {len(data2)} bytes")
-                                    if data2[0] == 0xDD and data2[1] == 0x03:
-                                        new_bms_data.parse_basic_info(data2)
-                                        break
-                                except asyncio.TimeoutError:
-                                    if retry < 14:
-                                        print(f"Waiting... ({retry + 1}/15)")
                     else:
                         print(f"Unexpected header: 0x{data[0]:02x} 0x{data[1]:02x}")
-                        
+
                 except asyncio.TimeoutError:
                     if attempt < 2:
                         print(f"Timeout, retry {attempt + 2}/3...")
@@ -470,8 +457,10 @@ async def read_bms_data_async():
             print("\n")
             new_bms_data.display()
             
-            # Update global BMS data
+            # Update global BMS data and mark as not published yet
             bms_data = new_bms_data
+            _bms_data_published = False  # Reset flag - new data needs to be published
+            print("New BMS data ready for publishing")
             
             return True
             
@@ -484,39 +473,71 @@ async def read_bms_data_async():
 
 def scan_bms_with_wifi_management():
     """Scan BMS with WiFi disabled, then re-enable WiFi"""
-    global wifi, _client, _last_bms_scan_ms
+    global wlan, _client, _last_bms_scan_ms
     
     print("\n" + "="*50)
     print("Starting BMS scan cycle")
     print("="*50)
-    
+
+    # free memory if possible
+    gc.collect()
+
     # Disconnect MQTT if connected
     if _client is not None:
         try:
             print("Disconnecting MQTT...")
             _client.disconnect()
+            print("done")
         except Exception as e:
             print(f"Error disconnecting MQTT: {e}")
         finally:
             _client = None
+
     
-    # Disconnect WiFi to free up resources for Bluetooth
-    print("Disabling WiFi for Bluetooth scan...")
+    # Enhanced WiFi shutdown for ESP32 Bluetooth/WiFi coexistence
+    print("Performing thorough WiFi shutdown for Bluetooth...")
     try:
-        wifi.disconnect()
-        time.sleep(0.5)
+        # Multiple disconnection attempts to ensure WiFi is fully off
+        for attempt in range(3):
+            try:
+                if wlan.isconnected():
+                    print(f"  Disconnect attempt {attempt + 1}/3...")
+                    wlan.disconnect()
+                    time.sleep(0.5)
+                else:
+                    print("  WiFi already disconnected")
+                    break
+            except Exception as e:
+                print(f"  Disconnect attempt {attempt + 1} error: {e}")
+                time.sleep(0.3)
+        
+        # Deactivate WiFi radio
+        print("  Deactivating WiFi radio...")
+        wlan.active(False)
+
+        # Extended cooldown period for ESP32 radio stabilization
+        # This is critical for Bluetooth to work after WiFi was active
+        print("  Waiting for radio stabilization (3 seconds)...")
+        time.sleep(3)
+
+        print(f"Final WiFi result {wlan.active}")
+
+        print("WiFi shutdown complete - radio ready for Bluetooth")
     except Exception as e:
-        print(f"Error disconnecting WiFi: {e}")
+        print(f"Error during WiFi shutdown: {e}")
+        # Still try to proceed with Bluetooth
+        time.sleep(3)
     
     # Perform BMS scan using asyncio
     try:
         rgb.write(num=1, R=255, G=255, B=0)  # Yellow LED for BMS scanning
+        print("Starting Bluetooth scan...")
         success = asyncio.run(read_bms_data_async())
         if success:
             print("BMS scan completed successfully")
             # Publish BMS data when WiFi comes back up
         else:
-            print("BMS scan failed")
+            print("BMS scan failed - will retry on next cycle")
     except Exception as e:
         print(f"Error during BMS scan: {e}")
         import sys
@@ -524,13 +545,16 @@ def scan_bms_with_wifi_management():
     finally:
         rgb.write(num=1, R=0, G=0, B=0)
     
-    # Re-enable WiFi
+    # Re-enable WiFi with proper delay for Bluetooth shutdown
     print("Re-enabling WiFi...")
-    time.sleep(1)  # Give Bluetooth time to fully shutdown
+    print("  Waiting for Bluetooth to fully shutdown (2 seconds)...")
+    time.sleep(2)  # Increased delay for Bluetooth shutdown
+    
     try:
-        ipcfg = wifi_connect_non_blocking(WIFI_SSID, WIFI_PASSWORD, timeout_s=10)
+        print("  Activating WiFi and connecting...")
+        ipcfg = wifi_connect_non_blocking(wlan, WIFI_SSID, WIFI_PASSWORD, timeout_s=10)
         if ipcfg:
-            print("WiFi reconnected after BMS scan")
+            print(f"WiFi reconnected: {ipcfg}")
         else:
             print("WiFi reconnection failed, will retry later")
     except Exception as e:
@@ -559,72 +583,80 @@ def maybe_scan_bms():
 
 
 def main():
-    global count, wifi, gauge, gauge_hum, gauge_bms_voltage, gauge_bms_soc, screen_status, _last_bms_scan_ms
-    
-    wifi = WiFi()
-    
+    global count, wlan, gauge_temp, gauge_hum, gauge_bms_voltage, gauge_bms_soc, screen_status, _last_bms_scan_ms
+
+    # Init Camera
+    #camera.init()
+
     # Initialize screen regardless of connectivity
     screen.init(dir=2)
     screen.show_bg(color=0x000000)
     screen.set_width(width=2)
             
     version = screen.print_lvgl_version()
-    screen.draw_text(text=f"Starting. {version}", x=1, y=1, font_size=16, color=0x008000)
+    screen.draw_text(text=f"Starting. {version}", x=1, y=1, font_size=12, color=0x008000)
     screen.show_draw()
+
+    # Initialize WiFi using standard MicroPython network module
+    wlan = network.WLAN(network.STA_IF)
 
     # Try initial WiFi (non-fatal if it fails)
-    ipcfg = wifi_connect_non_blocking(WIFI_SSID, WIFI_PASSWORD, timeout_s=8)
-    if ipcfg:
-        print("WiFi connected. IF config:", ipcfg)
-        screen.draw_text(text="WiFi connected.", x=1, y=80, font_size=16, color=0x008000)
-        screen.show_draw()
-    else:
-        print("Starting offline; will retry WiFi in background.")
-
-    # Try initial MQTT if WiFi is up (non-fatal)
+    # ipcfg = wifi_connect_non_blocking(wlan, WIFI_SSID, WIFI_PASSWORD, timeout_s=8)
+    # if ipcfg:
+    #     print("WiFi connected. IF config:", ipcfg)
+    #     screen.draw_text(text="WiFi connected.", x=1, y=80, font_size=16, color=0x008000)
+    #     screen.show_draw()
+    # else:
+    #     print("Starting offline; will retry WiFi in background.")
+    #
+    # # Try initial MQTT if WiFi is up (non-fatal)
     global _client
-    if wifi.status():
-        _client = mqtt_connect_and_subscribe()
-        if _client is None:
-            print("MQTT not available now; running offline.")
-        else:
-            screen.draw_text(text="MQTT connected.", x=1, y=120, font_size=16, color=0x008000)
-            screen.show_draw()
-            
-    # Init Camera
-    camera.init()
+    # if wlan.isconnected():
+    #     _client = mqtt_connect_and_subscribe()
+    #     if _client is None:
+    #         print("MQTT not available now; running offline.")
+    #     else:
+    #         screen.draw_text(text="MQTT connected.", x=1, y=120, font_size=16, color=0x008000)
+    #         screen.show_draw()
 
-    screen.draw_text(text="Camera init done", x=1, y=160, font_size=16, color=0x008000)
-    screen.show_draw()
+    #screen.draw_text(text="Camera init done", x=1, y=160, font_size=16, color=0x008000)
+    #screen.show_draw()
             
     screen.clear()
     
     # Show GUI elements - 4 gauges
-    gauge = screen.create_gauge(x=0, y=0, height=40, width=120, min_val=0, max_val=40)
-    gauge_hum = screen.create_gauge(x=120, y=0, height=40, width=120, min_val=0, max_val=100)
-    gauge_bms_voltage = screen.create_gauge(x=0, y=80, height=40, width=120, min_val=0, max_val=60)
-    gauge_bms_soc = screen.create_gauge(x=120, y=80, height=40, width=120, min_val=0, max_val=100)
+    gauge_temp = screen.create_gauge(x=60, y=0, height=40, width=180, min_val=0, max_val=40)
+    screen.draw_text(text="Tmp:", x=0, y=8, font_size=12, color=0xFFFFFF)
+
+    gauge_hum = screen.create_gauge(x=60, y=60, height=40, width=180, min_val=0, max_val=100)
+    screen.draw_text(text="Hum:", x=0, y=68, font_size=12, color=0xFFFFFF)
+    
+    gauge_bms_voltage = screen.create_gauge(x=60, y=120, height=40, width=180, min_val=0, max_val=15)
+    screen.draw_text(text="Bat:", x=0, y=128, font_size=12, color=0xFFFFFF)
+
+    gauge_bms_soc = screen.create_gauge(x=60, y=180, height=40, width=180, min_val=0, max_val=100)
+    screen.draw_text(text="SOC:", x=0, y=188, font_size=12, color=0xFFFFFF)
     
     # Initialize BMS scan timer
     _last_bms_scan_ms = time.ticks_ms() - (BMS_SCAN_INTERVAL_SECONDS * 1000) + 10000  # Scan after 10 seconds
     
     while True:
         try:
+            # Check if it's time to scan BMS (every 5 minutes)
+            maybe_scan_bms()
+
             # Background reconnection attempts
             maybe_reconnect_wifi()
             maybe_connect_mqtt()
-            
-            # Check if it's time to scan BMS (every 5 minutes)
-            maybe_scan_bms()
 
             # Handle incoming MQTT if connected
             if _client is not None:
                 try:
                     rgb.write(num=2, R=255, G=0, B=0)
                     _client.check_msg()
-                    
+
                     # Publish BMS data if available and not published yet
-                    if bms_data is not None:
+                    if bms_data is not None and not _bms_data_published:
                         publish_bms_data()
                         
                 except Exception as e:
@@ -637,12 +669,11 @@ def main():
                 finally:
                     rgb.write(num=2, R=0, G=0, B=0)
 
-            # Always update UI/sensors
-            if screen_status == "on":
-                print_sensor_values()
-            else:
-                print("Screen is off.")
-                
+            #if screen_status == "on":
+            print_sensor_values()
+            #else:
+            #    print("Screen is off.")
+
             publish_values()
             time.sleep(5)
             count += 1
@@ -653,3 +684,6 @@ def main():
         
 if __name__ == "__main__":
     main()
+
+
+

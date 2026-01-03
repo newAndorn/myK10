@@ -686,7 +686,7 @@ class Screen(object):
             value: The numerical value to set for the gauge bar
             text: Custom text to display (if empty, displays the numerical value)
             animated: Whether to animate the value change (default: True)
-            gauge_type: Type of gauge - "temperature" or "humidity" (default: "temperature")
+            gauge_type: Type of gauge - "temperature", "humidity", or "soc" (default: "temperature")
         """
         gauge = gauge_dict['gauge']
         label = gauge_dict['label']
@@ -700,6 +700,8 @@ class Screen(object):
         # Set color for the gauge bar based on gauge type
         if gauge_type == "humidity":
             color_value = self.get_humidity_color(value)
+        elif gauge_type == "soc":
+            color_value = self.get_soc_color(value)
         else:  # default to temperature
             color_value = self.get_temperature_color(value)
         gauge.set_style_bg_color(lv.color_hex(color_value), lv.STATE.DEFAULT)
@@ -882,13 +884,6 @@ class Screen(object):
             version_str = f"LVGL Version: {major}.{minor}.{patch}"
             print(version_str)
 
-            # Also print the full version info if available
-            try:
-                info = lv.version_info()
-                print(f"LVGL Info: {info}")
-            except:
-                pass
-
             return version_str
         except Exception as e:
             error_msg = f"Error getting LVGL version: {e}"
@@ -959,6 +954,42 @@ class Screen(object):
         else:
             # Blue for high humidity
             return 0x0000FF
+
+        # Convert RGB to hex
+        return (red << 16) | (green << 8) | blue
+
+    def get_soc_color(self, soc):
+        """
+        Calculate color based on SOC (State of Charge) value.
+        Red for low SOC (0%), green for high SOC (100%).
+
+        Args:
+            soc: State of Charge percentage (0-100)
+
+        Returns:
+            Color value in hex format (0xRRGGBB)
+        """
+        # Clamp SOC to valid range
+        soc = max(0, min(100, soc))
+        
+        if soc <= 20:
+            # Red for very low battery (0-20%)
+            return 0xFF0000
+        elif soc <= 50:
+            # Transition from red to yellow (20% to 50%)
+            ratio = (soc - 20) / 30  # 0 to 1
+            red = 255
+            green = int(255 * ratio)
+            blue = 0
+        elif soc <= 80:
+            # Transition from yellow to green (50% to 80%)
+            ratio = (soc - 50) / 30  # 0 to 1
+            red = int(255 * (1 - ratio))
+            green = 255
+            blue = 0
+        else:
+            # Green for high battery (80-100%)
+            return 0x00FF00
 
         # Convert RGB to hex
         return (red << 16) | (green << 8) | blue

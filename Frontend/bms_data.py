@@ -99,22 +99,25 @@ class BMSData:
     
     def calculate_soc_from_voltage(self, cell_voltage):
         """
-        Calculate SOC based on cell voltage for LiFePO4 (Liontron)
+        Calculate SOC based on cell voltage for 12V LiFePO4 battery
         Uses piecewise linear interpolation
+        Based on LiFePO4 voltage chart for 12V systems (4 cells in series)
+        Reference: https://www.bluettipower.eu/blogs/news/lifepo4-voltage-chart
         """
         # LiFePO4 voltage to SOC curve (per cell)
         # Format: (voltage, soc_percent)
+        # Derived from 12V system values: 12V ÷ 4 cells = per-cell voltage
         voltage_soc_curve = [
-            (2.50, 0),    # Empty (safety cutoff)
-            (3.00, 5),    # Very low
-            (3.10, 10),   
-            (3.20, 20),
-            (3.25, 40),   # Start of flat region
-            (3.30, 60),   
-            (3.35, 80),
-            (3.40, 90),
-            (3.50, 95),
-            (3.65, 100),  # Full charge
+            (2.50, 0),    # 10.0V total - Empty (safety cutoff)
+            (3.00, 5),    # 12.0V total - Very low
+            (3.10, 10),   # 12.4V total - Low
+            (3.20, 20),   # 12.8V total - Below 30%
+            (3.22, 30),   # 12.9V total - 30% (from chart)
+            (3.25, 50),   # 13.0V total - Mid-range
+            (3.30, 70),   # 13.2V total - Good
+            (3.35, 90),   # 13.4V total - 90% (from chart)
+            (3.40, 100),  # 13.6V total - 100% Rest (from chart)
+            (3.65, 100),  # 14.6V total - Full charge (stays at 100%)
         ]
         
         # Clamp voltage to valid range
