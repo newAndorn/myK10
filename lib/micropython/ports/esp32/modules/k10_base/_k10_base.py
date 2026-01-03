@@ -671,7 +671,6 @@ class Screen(object):
             except:
                 font_height = 16  # Default fallback
 
-        print(f"Actual font size: {font_height}")
         # Position label initially at the start of the gauge
         label.set_pos(x + 5, y + (height - font_height) // 2)
 
