@@ -290,7 +290,7 @@ def print_sensor_values():
         soc = bms_data.calculated_soc_voltage if bms_data.calculated_soc_voltage > 0 else bms_data.soc
         
         screen.set_gauge_value(gauge_bms_voltage, int(voltage), text=f"{voltage:.1f} V")
-        screen.set_gauge_value(gauge_bms_soc, int(soc), text=f"{soc:.0f} %")
+        screen.set_gauge_value(gauge_bms_soc, int(soc), text=f"{soc:.0f} %", gauge_type="soc")
 
     screen.show_draw()
 
@@ -583,7 +583,9 @@ def maybe_scan_bms():
 
 
 def main():
-    global count, wlan, gauge_temp, gauge_hum, gauge_bms_voltage, gauge_bms_soc, screen_status, _last_bms_scan_ms
+    global count, gauge_temp, gauge_hum, gauge_bms_voltage, gauge_bms_soc, screen_status, _last_bms_scan_ms
+
+    gc.enable()
 
     # Init Camera
     #camera.init()
@@ -642,6 +644,7 @@ def main():
     
     while True:
         try:
+
             # Check if it's time to scan BMS (every 5 minutes)
             maybe_scan_bms()
 
@@ -675,6 +678,17 @@ def main():
             #    print("Screen is off.")
 
             publish_values()
+            
+            # Display free memory at the end of the main loop
+            try:
+                screen.clear()
+                free_mem = gc.mem_free()
+                free_mem_kb = free_mem // 1024
+                screen.draw_text(text=f"Mem: {free_mem_kb}KB Count: {count}", x=1, y=295, font_size=12, color=0xFFFF00)
+            except Exception as e:
+                screen.draw_text(text="Free Mem: N/A", x=1, y=295, font_size=12, color=0xFFFF00)
+            
+            screen.show_draw()
             time.sleep(5)
             count += 1
         except Exception as e:
@@ -684,6 +698,3 @@ def main():
         
 if __name__ == "__main__":
     main()
-
-
-
