@@ -138,10 +138,10 @@ scr = lv.screen_active()
 scr.set_style_bg_color(lv.color_hex(0x003a57), lv.PART.MAIN)
 
 # Create a white label, set its text and align it to the center
-label = lv.label(lv.screen_active())
-label.set_text("Hello world")
-label.set_style_text_color(lv.color_hex(0xffffff), lv.PART.MAIN)
-label.align(lv.ALIGN.CENTER, 0, 0)
+status_label = lv.label(lv.screen_active())
+status_label.set_text("Hello world")
+status_label.set_style_text_color(lv.color_hex(0xffffff), lv.PART.MAIN)
+status_label.align(lv.ALIGN.CENTER, 0, 0)
 ```
 </details>
 <br>
@@ -176,7 +176,8 @@ void button_event_cb(lv_event_t * e)
 
 ```python
 def button_event_cb(e):
-  print("Clicked")
+
+      print("Clicked")
 
 # Create a Button and a Label
 button = lv.button(lv.screen_active())
@@ -184,9 +185,9 @@ button.center()
 button.set_size(100, 50)
 button.add_event_cb(button_event_cb, lv.EVENT.CLICKED, None)
 
-label = lv.label(button)
-label.set_text("Button")
-label.center()
+status_label = lv.label(button)
+status_label.set_text("Button")
+status_label.center()
 ```
 </details>
 <br>
