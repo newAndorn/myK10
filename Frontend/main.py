@@ -91,7 +91,6 @@ def button_b_pressed():
     print("button_b_pressed")
     camera.init(0, framesize=camera.FRAME_QVGA, format=camera.RGB565, fb_location=camera.PSRAM)
 
-
 def button_b_released():
     print("button_b_released")
 
@@ -337,7 +336,10 @@ def on_mqtt_message(topic, msg):
             act_power = data.get("act_power", 0)
             print(act_power)
 
-            # gauge = VerticalGauge(
+            # cast to INT ?
+            set_ampere_arc_value(arc_ampere, act_power)
+
+    # gauge = VerticalGauge(
             #     x=0, y=100, width=70, height=200, min_value=-200, max_value=200
             # )
             # gauge.set_value(act_power)
@@ -363,10 +365,10 @@ def mqtt_connect_and_subscribe():
         )
         client.set_callback(on_mqtt_message)
         client.connect()
-        # TODO: subscribe to multiple topics
-        #client.subscribe([MQTT_TOPIC_SUB, "unihiker/takephoto"])
-        client.subscribe("unihiker/takephoto")
-        print("Connected to MQTT and subscribed to:", MQTT_TOPIC_SUB.decode())
+        # Subscribe to multiple topics
+        topics = ["unihiker/takephoto", MQTT_TOPIC_SUB]
+        client.subscribe(topics)
+        print("Connected to MQTT and subscribed to:", topics)
         return client
     except Exception as e:
         print("MQTT connect/subscribe failed:", e)
@@ -712,11 +714,8 @@ def create_gui_elements():
     gauge_bms_voltage = screen.create_gauge(x=40, y=100, height=35, width=200, min_val=0, max_val=15)
     gauge_bms_soc = screen.create_gauge(x=40, y=150, height=35, width=200, min_val=0, max_val=100)
 
-    # Test
+    # Ampere meter
     arc_ampere = create_ampere_arc(x=120, y=210, radius=70, min_val=-10, max_val=10)
-
-    # test
-    set_ampere_arc_value(arc_ampere, 3)
 
     scr = lv.screen_active()
 
@@ -870,4 +869,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
