@@ -339,12 +339,6 @@ def on_mqtt_message(topic, msg):
             # cast to INT ?
             set_ampere_arc_value(arc_ampere, act_power)
 
-    # gauge = VerticalGauge(
-            #     x=0, y=100, width=70, height=200, min_value=-200, max_value=200
-            # )
-            # gauge.set_value(act_power)
-            # gauge.draw()
-            # screen.show_draw()
     except Exception as e:
         print("MQTT payload error:", e)
         print("Payload (raw bytes):", msg)
@@ -610,51 +604,6 @@ def scan_bms_with_wifi_management():
     # free memory if possible
     gc.collect()
 
-    # # Disconnect MQTT if connected
-    # if _client is not None:
-    #     try:
-    #         print("Disconnecting MQTT...")
-    #         _client.disconnect()
-    #         print("done")
-    #     except Exception as e:
-    #         print(f"Error disconnecting MQTT: {e}")
-    #     finally:
-    #         _client = None
-    #
-    # # Enhanced WiFi shutdown for ESP32 Bluetooth/WiFi coexistence
-    # print("Performing thorough WiFi shutdown for Bluetooth...")
-    # try:
-    #     # Multiple disconnection attempts to ensure WiFi is fully off
-    #     for attempt in range(3):
-    #         try:
-    #             if wlan.isconnected():
-    #                 print(f"  Disconnect attempt {attempt + 1}/3...")
-    #                 wlan.disconnect()
-    #                 time.sleep(0.5)
-    #             else:
-    #                 print("  WiFi already disconnected")
-    #                 break
-    #         except Exception as e:
-    #             print(f"  Disconnect attempt {attempt + 1} error: {e}")
-    #             time.sleep(0.3)
-    #
-    #     # Deactivate WiFi radio
-    #     print("  Deactivating WiFi radio...")
-    #     wlan.active(False)
-    #
-    #     # Extended cooldown period for ESP32 radio stabilization
-    #     # This is critical for Bluetooth to work after WiFi was active
-    #     print("  Waiting for radio stabilization (3 seconds)...")
-    #     time.sleep(3)
-    #
-    #     print(f"Final WiFi result {wlan.active}")
-    #
-    #     print("WiFi shutdown complete - radio ready for Bluetooth")
-    # except Exception as e:
-    #     print(f"Error during WiFi shutdown: {e}")
-    #     # Still try to proceed with Bluetooth
-    #     time.sleep(3)
-
     # Perform BMS scan using asyncio
     try:
         rgb.write(num=1, R=255, G=255, B=0)  # Yellow LED for BMS scanning
@@ -775,12 +724,8 @@ def printFreeMem():
 def main():
     global count, wlan, screen_status, _last_bms_scan_ms
 
-    printFreeMem()
-
     create_gui_elements()
-
     gc.enable()
-
     # Init Camera
     #camera.init()
 
@@ -790,24 +735,7 @@ def main():
     # Initialize WiFi using standard MicroPython network module
     wlan = network.WLAN(network.STA_IF)
 
-    # Try initial WiFi (non-fatal if it fails)
-    # ipcfg = wifi_connect_non_blocking(wlan, WIFI_SSID, WIFI_PASSWORD, timeout_s=8)
-    # if ipcfg:
-    #     print("WiFi connected. IF config:", ipcfg)
-    #     screen.draw_text(text="WiFi connected.", x=1, y=80, font_size=16, color=0x008000)
-    #     screen.show_draw()
-    # else:
-    #     print("Starting offline; will retry WiFi in background.")
-    #
-    # # Try initial MQTT if WiFi is up (non-fatal)
     global _client
-    # if wlan.isconnected():
-    #     _client = mqtt_connect_and_subscribe()
-    #     if _client is None:
-    #         print("MQTT not available now; running offline.")
-    #     else:
-    #         screen.draw_text(text="MQTT connected.", x=1, y=120, font_size=16, color=0x008000)
-    #         screen.show_draw()
 
     # Initialize BMS scan timer
     _last_bms_scan_ms = time.ticks_ms() - (BMS_SCAN_INTERVAL_SECONDS * 1000) + 10000  # Scan after 10 seconds
@@ -842,30 +770,14 @@ def main():
                 finally:
                     rgb.write(num=2, R=0, G=0, B=0)
 
-            #if screen_status == "on":
             print_sensor_values()
-            #else:
-            #    print("Screen is off.")
             publish_values()
-
-            # Display free memory at the end of the main loop
-            # try:
-            #     free_mem = gc.mem_free()
-            #     free_mem_kb = free_mem // 1024
-            #     # Clear the area before drawing new text
-            #     screen.draw_rect(x=1, y=295, w=240, h=27, fcolor=0x000000)
-            #     screen.draw_text(text=f"{free_mem_kb}KB, {count}", x=1, y=295, font_size=12, color=0xFFFF00)
-            # except Exception as e:
-            #     screen.draw_rect(x=1, y=295, w=240, h=27, fcolor=0x000000)
-            #     screen.draw_text(text="Free Mem: N/A", x=1, y=295, font_size=12, color=0xFFFF00)
-
             screen.show_draw()
             time.sleep(5)
             count += 1
         except Exception as e:
             print("Main loop error:", e)
             time.sleep(1)
-
 
 if __name__ == "__main__":
     main()
